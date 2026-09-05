@@ -6,6 +6,10 @@ import argparse
 import re
 import numpy as np
 import sounddevice as sd
+from dotenv import load_dotenv
+from openai import OpenAI
+
+load_dotenv()
 
 # Ensure Windows terminal handles UTF-8 cleanly
 if hasattr(sys.stdout, "reconfigure"):
@@ -43,6 +47,33 @@ _setup_cuda_dlls()
 
 import ctranslate2
 from faster_whisper import WhisperModel
+
+
+FACT_CHECK_SYSTEM_PROMPT = (
+    "You are a fact-checking assistant. Analyze the statement provided by the "
+    "speaker. Determine whether it is TRUE, FALSE, or UNCERTAIN. Give a short "
+    "explanation for your decision."
+)
+
+
+def fact_check_statement(statement: str) -> str:
+    """Send the exact Whisper transcription to Groq for fact-checking."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY was not found in the .env file.")
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
+    response = client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": FACT_CHECK_SYSTEM_PROMPT},
+            {"role": "user", "content": statement},
+        ],
+    )
+    return response.choices[0].message.content.strip()
 
 
 # --- Natural Devanagari to Hinglish (Romanized Hindi) Transliteration ---
@@ -257,7 +288,12 @@ def live_transcribe(
                         detected_lang = info.language.upper() if info and info.language else "UNKNOWN"
                         
                         if is_pause or is_max_length:
-                            print(f"\r\033[K[{detected_lang}]: {final_text}")
+                            print(f"\r\033[KTRANSCRIBED TEXT:\n{raw_text}")
+                            try:
+                                llm_response = fact_check_statement(raw_text)
+                                print(f"\nLLM RESPONSE:\n{llm_response}")
+                            except Exception as e:
+                                print(f"\nLLM ERROR: {e}")
                             accumulated_audio = np.array([], dtype=np.float32)
                             speech_started = False
                         else:

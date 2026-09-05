@@ -3,3 +3,5 @@ sounddevice
 numpy
 nvidia-cublas-cu12
 nvidia-cudnn-cu12
+openai
+python-dotenv
