@@ -123,10 +123,23 @@ class SentenceClassifier:
             device_id = self._resolve_device()
             self._device = device_id
 
+            dtype_setting = None
+            if device_id != -1:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        dtype_setting = torch.float16
+                except ImportError:
+                    pass
+
+            kwargs = {"device": device_id}
+            if dtype_setting is not None:
+                kwargs["dtype"] = dtype_setting
+
             self._pipeline = pipeline(
                 "zero-shot-classification",
                 model=self.model_name,
-                device=device_id,
+                **kwargs,
             )
 
     def is_loaded(self) -> bool:
@@ -194,12 +207,13 @@ class SentenceClassifier:
         if self._pipeline is None:
             self.load_model()
 
-        # 3. Execute ModernBERT zero-shot classification
+        # 3. Execute ModernBERT zero-shot classification (batched hypothesis scoring)
         result = self._pipeline(
             sentence_clean,
             candidate_labels=target_categories,
             hypothesis_template=self.hypothesis_template,
             multi_label=multi_label,
+            batch_size=len(target_categories),
         )
 
         labels = result.get("labels", [])
