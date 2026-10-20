@@ -17,3 +17,6 @@ python-dotenv
 
 # Speaker Diarization dependencies
 pyannote.audio
+
+# Local Sentence Classification (ModernBERT)
+transformers>=4.48.0
