@@ -38,10 +38,16 @@ Non-blocking guarantees
 from __future__ import annotations
 
 import sys
+import os
 import time
 import threading
 import multiprocessing
 from typing import Any, Callable, Dict, List, Tuple
+
+try:
+    import logger
+except ImportError:
+    from whisper import logger
 
 
 # ---------------------------------------------------------------------------
@@ -178,9 +184,16 @@ def _llm_worker(
     active_threads: List[threading.Thread] = []
 
     def _dispatch_llm(speaker_block: str, timestamp: str) -> None:
-        """Daemon thread: calls LLM and prints result."""
+        """Daemon thread: calls LLM, logs to vague.log, and prints result."""
+        t_start = time.time()
         try:
             result = llm_fn(speaker_block)
+            latency = time.time() - t_start
+            logger.log_llm_response(
+                response=result,
+                latency_sec=latency,
+                speaker_block=speaker_block,
+            )
             bar = "-" * 64
             print(
                 f"\n{bar}\n"
@@ -193,12 +206,14 @@ def _llm_worker(
                 flush=True,
             )
         except Exception as exc:
+            logger.log_error(f"LLM call failed: {exc}", exc=exc)
             print(
                 f"\n[LLM Pipeline] LLM call failed: {exc}",
                 file=sys.stderr,
                 flush=True,
             )
 
+    logger.log_system_start("LLMPipelineWorker", f"PID={os.getpid()}, interval={interval_sec}s")
     print(
         f"\n[LLM Pipeline] Worker ready  (interval={interval_sec}s)",
         flush=True,
@@ -207,12 +222,21 @@ def _llm_worker(
     while not stop_event.is_set():
         # Non-blocking wait: wakes on timeout OR stop signal
         stop_event.wait(timeout=interval_sec)
+        if stop_event.is_set():
+            break
 
         new_speakers = _get_new_speakers(data, ptrs)
 
         if new_speakers:
             ts            = time.strftime("%H:%M:%S")
             speaker_block = _format_speaker_block(new_speakers)
+
+            # Log dispatch to vague.log
+            logger.log_llm_dispatch(
+                interval_sec=interval_sec,
+                speaker_block=speaker_block,
+                speakers=list(new_speakers.keys()),
+            )
 
             # Log pointer positions
             ptr_summary = " | ".join(
@@ -242,6 +266,7 @@ def _llm_worker(
         for t in active_threads:
             t.join(timeout=15)
 
+    logger.log_system_stop("LLMPipelineWorker")
     print("\n[LLM Pipeline] Worker stopped cleanly.", flush=True)
 
 
@@ -313,3 +338,4 @@ def start_llm_pipeline(
     )
 
     return buffer, process, stop_event
+

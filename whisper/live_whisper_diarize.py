@@ -14,6 +14,8 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
 from dotenv import load_dotenv
 from openai import OpenAI
 from llm_pipeline import start_llm_pipeline
+import logger
+from whisper import logger
 
 load_dotenv()
 
@@ -461,6 +463,11 @@ def live_transcribe(
     print("    Press Ctrl+C to stop.")
     print("=" * 65 + "\n")
 
+    logger.log_system_start(
+        "LiveWhisperDiarize",
+        f"model={model_name}, lang={language_mode}, diarize={bool(diarize_pipeline)}, llm_interval={llm_interval_sec}s",
+    )
+
     try:
         with sd.InputStream(
             samplerate=sample_rate,
@@ -496,9 +503,9 @@ def live_transcribe(
 
                 is_pause      = speech_started and (current_time - last_speech_time >= pause_threshold)
                 is_max_length = audio_len_sec >= max_speech_duration
-                is_interim    = speech_started and (current_time - last_transcribed_time >= 3.0) and audio_len_sec >= 30.0
+                is_interim    = speech_started and (current_time - last_transcribed_time >= 1.5) and audio_len_sec >= 1.0
 
-                if audio_len_sec >= 30.0 and (is_pause or is_max_length or is_interim):
+                if audio_len_sec >= 0.5 and (is_pause or is_max_length or is_interim):
                     target_lang = language_mode if language_mode in ["hi", "en"] else None
 
                     # --- Transcription ---
@@ -574,6 +581,8 @@ def live_transcribe(
                             # Feed the finalized transcript into the speaker-keyed LLM buffer.
                             # The worker process picks it up every llm_interval_sec seconds
                             # in a non-blocking daemon thread -- main loop is never stalled.
+                            append_reason = "speaker paused" if is_pause else "30sec over"
+
                             if diarize_pipeline and diarized:
                                 # Group consecutive text per speaker and append individually
                                 # so each speaker's pointer advances independently.
@@ -585,10 +594,23 @@ def live_transcribe(
                                         _out = devanagari_to_hinglish(_txt) if output_script == "hinglish" else _txt
                                         _speaker_accum.setdefault(_sp, []).append(_out)
                                 for _sp, _txts in _speaker_accum.items():
-                                    llm_buffer.append(_sp, " ".join(_txts))
+                                    combined_spk_text = " ".join(_txts)
+                                    llm_buffer.append(_sp, combined_spk_text)
+                                    logger.log_stt_append(
+                                        reason=append_reason,
+                                        speaker=_sp,
+                                        text=combined_spk_text,
+                                        duration_sec=audio_len_sec,
+                                    )
                             else:
                                 # No diarization -- use a single default speaker key
                                 llm_buffer.append("UNKNOWN", raw_text)
+                                logger.log_stt_append(
+                                    reason=append_reason,
+                                    speaker="UNKNOWN",
+                                    text=raw_text,
+                                    duration_sec=audio_len_sec,
+                                )
 
                             accumulated_audio = np.array([], dtype=np.float32)
                             speech_started = False
@@ -608,12 +630,14 @@ def live_transcribe(
 
     except KeyboardInterrupt:
         print("\n\n🛑 Microphone stopped.")
+        logger.log_system_stop("LiveWhisperDiarize", "KeyboardInterrupt")
         # Signal and wait for the LLM pipeline worker to drain in-flight calls
         llm_stop_event.set()
         llm_worker.join(timeout=20)
         print("🛑 LLM pipeline stopped.")
     except Exception as e:
         print(f"\n❌ Error: {e}")
+        logger.log_error(f"LiveWhisperDiarize encountered error: {e}", exc=e)
         import traceback
         traceback.print_exc()
 

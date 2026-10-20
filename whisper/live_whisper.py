@@ -8,6 +8,10 @@ import numpy as np
 import sounddevice as sd
 from dotenv import load_dotenv
 from openai import OpenAI
+try:
+    import logger
+except ImportError:
+    from whisper import logger
 
 load_dotenv()
 
@@ -288,11 +292,27 @@ def live_transcribe(
                         detected_lang = info.language.upper() if info and info.language else "UNKNOWN"
                         
                         if is_pause or is_max_length:
+                            append_reason = "speaker paused" if is_pause else "30sec over"
+                            logger.log_stt_append(
+                                reason=append_reason,
+                                speaker="UNKNOWN",
+                                text=raw_text,
+                                duration_sec=audio_len_sec,
+                            )
                             print(f"\r\033[KTRANSCRIBED TEXT:\n{raw_text}")
                             try:
+                                logger.log_llm_dispatch(interval_sec=0, speaker_block=raw_text, speakers=["UNKNOWN"])
+                                t_llm_start = time.time()
                                 llm_response = fact_check_statement(raw_text)
+                                latency = time.time() - t_llm_start
+                                logger.log_llm_response(
+                                    response=llm_response,
+                                    latency_sec=latency,
+                                    speaker_block=raw_text,
+                                )
                                 print(f"\nLLM RESPONSE:\n{llm_response}")
                             except Exception as e:
+                                logger.log_error(f"LLM call failed: {e}", exc=e)
                                 print(f"\nLLM ERROR: {e}")
                             accumulated_audio = np.array([], dtype=np.float32)
                             speech_started = False
