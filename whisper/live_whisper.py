@@ -180,6 +180,7 @@ def create_whisper_model(
     """Initializes and returns the optimized Faster-Whisper model."""
     if device is None:
         device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        print(device)
     
     if compute_type is None:
         compute_type = "int8_float16" if device == "cuda" else "int8"
@@ -274,7 +275,7 @@ def live_transcribe(
                         if hi_prob >= 0.10 and info.language != "hi":
                             segments, info = model.transcribe(
                                 accumulated_audio,
-                                beam_size=5,
+                                beam_size=7,
                                 language="hi",
                                 task=task,
                                 vad_filter=True,

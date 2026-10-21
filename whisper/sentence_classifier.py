@@ -1,62 +1,154 @@
 """
 sentence_classifier.py
 ----------------------
-Local sentence classification module using ModernBERT-base.
-Classifies input sentences into categories: [fact, claim, query, question] (or custom labels).
+Local sentence classification and intent routing module using ModernBERT-base.
+Tailored for real-world conversational transcripts (e.g. multi-speaker panel discussions).
 
-Architecture:
-  - Zero-shot classification powered by ModernBERT-base (e.g. MoritzLaurer/ModernBERT-base-zeroshot-v2.0).
-  - Lazy loading: Weights are loaded upon first inference or explicit load_model() call.
-  - Fully unit-testable: Supports mock engines, custom backends, and deterministic heuristics.
-  - Returns output format: { "text": sentence, "classifications": [category] }
+Classifies input sentences into architectural intent tracks:
+  - FACT_CLAIM     (fact_claim: objective, verifiable factual assertions, statistics, empirical claims)
+  - OPINION_DEBATE (opinion_debate: subjective viewpoints, policy recommendations, moral beliefs, rhetorical stances)
+  - QUESTION_QUERY (question_query: information-seeking questions, inquiries, clarification requests)
+
+Real-World Conversational Edge-Case Handling:
+  - Pragmatic Semantic Prompts: Distinguishes rhetorical debate questions from information-seeking questions.
+  - Speaker Tag & STT Artifact Sanitization: Cleans diarization tokens (e.g. 'SPEAKER_00:') and spacing.
+  - Confidence Margin & Ambiguity Detection: Computes decision margin (Δ = top - runner_up) to flag ambiguous utterances.
+  - Multi-label Support: Captures compound sentences containing multiple concurrent intents.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-# Default target categories as requested
-DEFAULT_CATEGORIES: List[str] = ["fact", "claim", "query", "question"]
+# Architectural tracks corresponding directly to system pipelines
+TRACK_FACT_CLAIM: str = "FACT_CLAIM"
+TRACK_OPINION_DEBATE: str = "OPINION_DEBATE"
+TRACK_QUESTION_QUERY: str = "QUESTION_QUERY"
+
+# Default target categories aligned with architectural tracks
+DEFAULT_CATEGORIES: List[str] = ["fact_claim", "opinion_debate", "question_query"]
 
 # Standard zero-shot model built directly on ModernBERT-base
 DEFAULT_MODEL_NAME: str = os.environ.get(
     "MODERNBERT_MODEL_NAME", "MoritzLaurer/ModernBERT-base-zeroshot-v2.0"
 )
 
-# Hypothesis template for zero-shot NLI
-DEFAULT_HYPOTHESIS_TEMPLATE: str = "This text is a {}."
+# Hypothesis template for zero-shot NLI using descriptive labels
+DEFAULT_HYPOTHESIS_TEMPLATE: str = "This text expresses {}."
+
+# Track mapping for canonical intents and backward-compatible aliases
+TRACK_MAPPING: Dict[str, str] = {
+    "fact_claim": TRACK_FACT_CLAIM,
+    "opinion_debate": TRACK_OPINION_DEBATE,
+    "question_query": TRACK_QUESTION_QUERY,
+    # Aliases
+    "fact": TRACK_FACT_CLAIM,
+    "claim": TRACK_FACT_CLAIM,
+    "statement": TRACK_FACT_CLAIM,
+    "opinion": TRACK_OPINION_DEBATE,
+    "debate": TRACK_OPINION_DEBATE,
+    "question": TRACK_QUESTION_QUERY,
+    "query": TRACK_QUESTION_QUERY,
+}
+
+# Pragmatic semantic descriptions designed for real-world conversational speech:
+# Specifically tuned to separate:
+#   1. Empirical claims (even if hedged) vs. Subjective values
+#   2. Information-seeking inquiries vs. Rhetorical debate arguments
+SEMANTIC_DESCRIPTIONS: Dict[str, str] = {
+    "fact_claim": (
+        "an objective, verifiable factual claim, historical event, statistic, "
+        "or empirical assertion that can be proven true or false"
+    ),
+    "opinion_debate": (
+        "a subjective opinion, personal viewpoint, policy recommendation, "
+        "value judgment, moral belief, or rhetorical debate argument"
+    ),
+    "question_query": (
+        "an information-seeking question, inquiry, or request for factual clarification"
+    ),
+    # Backward-compatible aliases
+    "fact": "an objective, verifiable factual statement or historical record",
+    "claim": "an empirical claim, statistic, or assertion requiring evidence",
+    "opinion": "a subjective opinion, personal viewpoint, or moral belief",
+    "debate": "a debate stance, rhetorical argument, or policy recommendation",
+    "statement": "a declarative factual statement or assertion",
+    "question": "an information-seeking question or inquiry",
+    "query": "a search query, lookup directive, or request for data",
+}
+
+# Regex to sanitize speaker diarization prefixes from STT output (e.g. 'SPEAKER_01: ', '[SPEAKER_0]: ')
+_SPEAKER_PREFIX_REGEX = re.compile(
+    r"^(\[?\s*SPEAKER[_\s\-]?\d+\s*\]?|\bSPEAKER\b|\bMODERATOR\b|\bPANELIST\b|\bHOST\b)\s*:\s*",
+    re.IGNORECASE,
+)
 
 
-def _heuristic_rule_fallback(sentence: str, candidate_categories: List[str]) -> Optional[str]:
+def sanitize_conversational_text(text: str) -> str:
     """
-    Fast rule-based heuristic for obvious question and query patterns.
-    Used for unit testing mocks and rapid sanity checks.
+    Sanitize raw conversational transcript text from STT / diarization pipelines:
+      - Strips speaker tags (e.g. 'SPEAKER_00: ', '[SPEAKER_1]: ', 'MODERATOR: ')
+      - Normalizes excess whitespace and newlines
     """
-    s = sentence.strip().lower()
-    if not s:
-        return None
+    if not text:
+        return ""
+    cleaned = _SPEAKER_PREFIX_REGEX.sub("", text.strip())
+    # Collapse irregular whitespace often generated by streaming STT
+    return " ".join(cleaned.split())
 
-    # Question detection
-    if "question" in candidate_categories:
-        if s.endswith("?") or re.match(
-            r"^(what|why|who|where|when|which|how|is|are|can|could|do|does|did|will|would|kya|kyun|kaise)\b",
-            s,
-        ):
-            return "question"
 
-    # Query detection (search directives)
-    if "query" in candidate_categories:
-        if re.match(r"^(search|find|look up|show me|tell me|get|query)\b", s):
-            return "query"
+# Common abbreviations that must not trigger a sentence break in the regex fallback
+_ABBREVIATIONS = ("mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "u.s", "u.k", "e.g", "i.e", "no")
+_SENTENCE_BOUNDARY_REGEX = re.compile(r"(?<=[.!?])\s+(?=[\"'(\[]?[A-Z0-9])")
 
-    return None
+_pysbd_segmenter = None
+_pysbd_checked = False
+
+
+def _get_pysbd_segmenter():
+    """Lazily build a pysbd segmenter; returns None if pysbd is not installed."""
+    global _pysbd_segmenter, _pysbd_checked
+    if not _pysbd_checked:
+        _pysbd_checked = True
+        try:
+            import pysbd
+            _pysbd_segmenter = pysbd.Segmenter(language="en", clean=False)
+        except ImportError:
+            _pysbd_segmenter = None
+    return _pysbd_segmenter
+
+
+def split_sentences(text: str) -> List[str]:
+    """
+    Split a (sanitized) transcript segment into individual sentences.
+    Uses pysbd when available (handles abbreviations, decimals); otherwise falls back
+    to an abbreviation-aware regex splitter.
+    """
+    if not text or not text.strip():
+        return []
+
+    segmenter = _get_pysbd_segmenter()
+    if segmenter is not None:
+        return [s.strip() for s in segmenter.segment(text) if s.strip()]
+
+    parts = _SENTENCE_BOUNDARY_REGEX.split(text.strip())
+    sentences: List[str] = []
+    for part in parts:
+        if sentences:
+            last_word = sentences[-1].rstrip().split()[-1].lower().rstrip(".") if sentences[-1].split() else ""
+            if sentences[-1].endswith(".") and last_word in _ABBREVIATIONS:
+                sentences[-1] = sentences[-1] + " " + part
+                continue
+        sentences.append(part)
+    return [s.strip() for s in sentences if s.strip()]
 
 
 class SentenceClassifier:
     """
-    Local Sentence Classifier utilizing ModernBERT-base for low-latency classification.
+    Local Sentence Classifier utilizing ModernBERT-base with pragmatic semantic hypotheses
+    and conversational edge-case handling for high-precision intent classification and track routing.
     """
 
     def __init__(
@@ -64,6 +156,10 @@ class SentenceClassifier:
         model_name: Optional[str] = None,
         device: Optional[str] = "auto",
         hypothesis_template: str = DEFAULT_HYPOTHESIS_TEMPLATE,
+        use_semantic_descriptions: bool = True,
+        sanitize_inputs: bool = True,
+        ambiguity_margin_threshold: float = 0.08,
+        min_confidence_threshold: float = 0.40,
         mock_engine: Optional[Callable[[str, List[str]], Dict[str, Any]]] = None,
     ) -> None:
         """
@@ -72,17 +168,31 @@ class SentenceClassifier:
         Parameters
         ----------
         model_name : str, optional
-            Hugging Face model checkpoint (defaults to ModernBERT-base zero-shot)
+            Hugging Face model checkpoint (defaults to ModernBERT-base zero-shot).
         device : str, optional
-            'auto' (picks cuda if available, else cpu), 'cuda', 'cpu', or device ID
+            'auto' (picks cuda if available, else cpu), 'cuda', 'cpu', or device ID.
         hypothesis_template : str
-            Template used for NLI zero-shot entailment scoring
+            Template used for NLI zero-shot entailment scoring.
+        use_semantic_descriptions : bool, default True
+            Whether to expand known categories into rich pragmatic descriptions to maximize
+            NLI logit separation in embedding space.
+        sanitize_inputs : bool, default True
+            Whether to strip diarization speaker tags and collapse irregular STT whitespace.
+        ambiguity_margin_threshold : float, default 0.08
+            If the difference between top score and runner-up score is below this margin,
+            the utterance is flagged as ambiguous (is_ambiguous=True).
+        min_confidence_threshold : float, default 0.40
+            If the top score is below this threshold, the utterance is flagged as ambiguous.
         mock_engine : callable, optional
             Injected mock engine for unit testing without downloading model weights.
-            Signature: (sentence: str, categories: List[str]) -> Dict[str, float]
+            Signature: (sentence: str, categories: List[str]) -> Dict[str, Any]
         """
         self.model_name = model_name or DEFAULT_MODEL_NAME
         self.hypothesis_template = hypothesis_template
+        self.use_semantic_descriptions = use_semantic_descriptions
+        self.sanitize_inputs = sanitize_inputs
+        self.ambiguity_margin_threshold = ambiguity_margin_threshold
+        self.min_confidence_threshold = min_confidence_threshold
         self.device_setting = device
         self.mock_engine = mock_engine
 
@@ -153,53 +263,85 @@ class SentenceClassifier:
         multi_label: bool = False,
     ) -> Dict[str, Any]:
         """
-        Classify a single sentence into the target categories.
+        Classify a conversational utterance and route to an architecture track.
 
         Parameters
         ----------
         sentence : str
-            The input sentence / utterance.
+            The input utterance (may include STT artifacts or speaker tags).
         categories : list of str, optional
-            Candidate categories (defaults to ['fact', 'claim', 'query', 'question']).
+            Candidate categories (defaults to ['fact_claim', 'opinion_debate', 'question_query']).
         multi_label : bool, default False
-            Whether multiple categories can apply independently.
+            Whether multiple categories can apply independently (useful for compound statements).
 
         Returns
         -------
         dict
             {
-                "text": sentence,
-                "classifications": [top_category],
+                "text": original sentence,
+                "cleaned_text": cleaned utterance,
+                "classifications": [top_category] or [active categories if multi_label],
                 "top_category": top_category,
-                "scores": {category: score, ...},
-                "confidence": float
+                "track": track,  # FACT_CLAIM, OPINION_DEBATE, QUESTION_QUERY, or None
+                "confidence": float,
+                "margin": float,           # Margin over runner-up (Δ = p1 - p2)
+                "is_ambiguous": bool,       # True if margin or confidence is below threshold
+                "scores": {category: score, ...}
             }
         """
-        sentence_clean = sentence.strip() if sentence else ""
+        cleaned_text = sanitize_conversational_text(sentence) if self.sanitize_inputs else (sentence.strip() if sentence else "")
         target_categories = categories or DEFAULT_CATEGORIES
 
-        if not sentence_clean:
+        # Edge case: Empty, whitespace-only, or stripped utterance
+        if not cleaned_text:
             return {
                 "text": sentence,
+                "cleaned_text": "",
                 "classifications": [],
                 "top_category": None,
+                "track": None,
                 "confidence": 0.0,
+                "margin": 0.0,
+                "is_ambiguous": True,
                 "scores": {cat: 0.0 for cat in target_categories},
             }
 
         # 1. Use mock engine if provided (unit testing hook)
         if self.mock_engine is not None:
-            engine_result = self.mock_engine(sentence_clean, target_categories)
+            engine_result = self.mock_engine(cleaned_text, target_categories)
             scores = engine_result.get("scores", {})
             top_category = engine_result.get("top_category")
             if not top_category and scores:
                 top_category = max(scores, key=scores.get)
 
+            sorted_scores = sorted(scores.values(), reverse=True)
+            top_conf = sorted_scores[0] if sorted_scores else 0.0
+            runner_up_conf = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
+            margin = round(top_conf - runner_up_conf, 4)
+            is_ambiguous = (
+                top_conf < self.min_confidence_threshold or margin < self.ambiguity_margin_threshold
+            )
+
+            track = engine_result.get("track") or (
+                TRACK_MAPPING.get(top_category) if top_category else None
+            )
+
+            if multi_label:
+                threshold = 0.5
+                selected = [lbl for lbl, sc in scores.items() if sc >= threshold]
+                classifications = selected if selected else ([top_category] if top_category else [])
+            else:
+                classifications = [top_category] if top_category else []
+
             return {
                 "text": sentence,
-                "classifications": [top_category] if top_category else [],
+                "cleaned_text": cleaned_text,
+                "classifications": classifications,
                 "top_category": top_category,
-                "confidence": round(scores.get(top_category, 0.0), 4) if top_category else 0.0,
+                "track": track,
+                "confidence": round(top_conf, 4),
+                "margin": margin,
+                "is_ambiguous": is_ambiguous,
                 "scores": scores,
             }
 
@@ -207,25 +349,51 @@ class SentenceClassifier:
         if self._pipeline is None:
             self.load_model()
 
-        # 3. Execute ModernBERT zero-shot classification (batched hypothesis scoring)
+        # 3. Build candidate labels for NLI (applying semantic descriptions if enabled)
+        label_to_cat: Dict[str, str] = {}
+        candidate_labels: List[str] = []
+
+        if self.use_semantic_descriptions:
+            for cat in target_categories:
+                desc = SEMANTIC_DESCRIPTIONS.get(cat, cat)
+                label_to_cat[desc] = cat
+                candidate_labels.append(desc)
+        else:
+            for cat in target_categories:
+                label_to_cat[cat] = cat
+                candidate_labels.append(cat)
+
+        # 4. Execute ModernBERT zero-shot classification
         result = self._pipeline(
-            sentence_clean,
-            candidate_labels=target_categories,
+            cleaned_text,
+            candidate_labels=candidate_labels,
             hypothesis_template=self.hypothesis_template,
             multi_label=multi_label,
-            batch_size=len(target_categories),
+            batch_size=len(candidate_labels),
         )
 
-        labels = result.get("labels", [])
-        scores_list = result.get("scores", [])
+        raw_labels = result.get("labels", [])
+        raw_scores = result.get("scores", [])
 
-        scores_dict = {
-            label: round(float(score), 4)
-            for label, score in zip(labels, scores_list)
-        }
+        # Map semantic descriptions back to canonical category names
+        scores_dict: Dict[str, float] = {}
+        for label, score in zip(raw_labels, raw_scores):
+            cat = label_to_cat.get(label, label)
+            scores_dict[cat] = round(float(score), 4)
 
-        top_category = labels[0] if labels else None
-        confidence = scores_dict.get(top_category, 0.0) if top_category else 0.0
+        # Compute top category, runner-up margin, and ambiguity
+        sorted_cats = sorted(scores_dict.keys(), key=lambda c: scores_dict[c], reverse=True)
+        top_category = sorted_cats[0] if sorted_cats else None
+        top_conf = scores_dict.get(top_category, 0.0) if top_category else 0.0
+
+        runner_up_cat = sorted_cats[1] if len(sorted_cats) > 1 else None
+        runner_up_conf = scores_dict.get(runner_up_cat, 0.0) if runner_up_cat else 0.0
+        margin = round(top_conf - runner_up_conf, 4)
+
+        is_ambiguous = (
+            top_conf < self.min_confidence_threshold or margin < self.ambiguity_margin_threshold
+        )
+        track = TRACK_MAPPING.get(top_category)
 
         if multi_label:
             threshold = 0.5
@@ -236,9 +404,13 @@ class SentenceClassifier:
 
         return {
             "text": sentence,
+            "cleaned_text": cleaned_text,
             "classifications": classifications,
             "top_category": top_category,
-            "confidence": confidence,
+            "track": track,
+            "confidence": top_conf,
+            "margin": margin,
+            "is_ambiguous": is_ambiguous,
             "scores": scores_dict,
         }
 
@@ -248,8 +420,94 @@ class SentenceClassifier:
         categories: Optional[List[str]] = None,
         multi_label: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Classify a list of sentences."""
+        """Classify a list of conversational sentences."""
         return [self.classify(s, categories=categories, multi_label=multi_label) for s in sentences]
+
+    def classify_text(
+        self,
+        text: str,
+        categories: Optional[List[str]] = None,
+        multi_label: bool = False,
+        min_words: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Split a multi-sentence segment into sentences, classify each, and aggregate
+        into a final segment-level result.
+
+        Aggregation: per-category score = word-count-weighted mean of sentence scores.
+        Sentences shorter than `min_words` (e.g. 'Yeah.', 'Right.') are excluded from the
+        aggregate unless every sentence is that short. Only the final category scores
+        are re-evaluated for margin / ambiguity; per-sentence results are kept in
+        `sentences` so callers can route each sentence individually.
+
+        Returns the same keys as `classify()`, plus:
+            "sentences": [per-sentence classify() results, each with "weight" and "included"],
+            "track_counts": {track: number of sentences whose top track is that track}
+        """
+        cleaned_text = sanitize_conversational_text(text) if self.sanitize_inputs else (text.strip() if text else "")
+        target_categories = categories or DEFAULT_CATEGORIES
+        sentence_texts = split_sentences(cleaned_text)
+
+        if not sentence_texts:
+            empty = self.classify("", categories=target_categories, multi_label=multi_label)
+            empty["text"] = text
+            empty["sentences"] = []
+            empty["track_counts"] = {}
+            return empty
+
+        # Sentences were already cleaned; avoid re-stripping speaker-like prefixes mid-text
+        results = [
+            self.classify(s, categories=target_categories, multi_label=multi_label)
+            for s in sentence_texts
+        ]
+
+        word_counts = [len(r["cleaned_text"].split()) for r in results]
+        use_all = all(wc < min_words for wc in word_counts)
+        for r, wc in zip(results, word_counts):
+            included = use_all or wc >= min_words
+            r["included"] = included
+            r["weight"] = wc if included else 0
+
+        total_weight = sum(r["weight"] for r in results) or 1
+        agg_scores: Dict[str, float] = {
+            cat: round(
+                sum(r["scores"].get(cat, 0.0) * r["weight"] for r in results) / total_weight, 4
+            )
+            for cat in target_categories
+        }
+
+        ranked = sorted(agg_scores, key=agg_scores.get, reverse=True)
+        top_category = ranked[0]
+        top_conf = agg_scores[top_category]
+        runner_up = agg_scores[ranked[1]] if len(ranked) > 1 else 0.0
+        margin = round(top_conf - runner_up, 4)
+
+        if multi_label:
+            selected = [c for c, sc in agg_scores.items() if sc >= 0.5]
+            classifications = selected or [top_category]
+        else:
+            classifications = [top_category]
+
+        track_counts: Dict[str, int] = {}
+        for r in results:
+            if r["track"]:
+                track_counts[r["track"]] = track_counts.get(r["track"], 0) + 1
+
+        return {
+            "text": text,
+            "cleaned_text": cleaned_text,
+            "classifications": classifications,
+            "top_category": top_category,
+            "track": TRACK_MAPPING.get(top_category),
+            "confidence": top_conf,
+            "margin": margin,
+            "is_ambiguous": (
+                top_conf < self.min_confidence_threshold or margin < self.ambiguity_margin_threshold
+            ),
+            "scores": agg_scores,
+            "sentences": results,
+            "track_counts": track_counts,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -279,20 +537,20 @@ def classify_sentence(
     multi_label: bool = False,
 ) -> Dict[str, Any]:
     """
-    Convenience function to classify a sentence into categories.
+    Convenience function to classify an utterance into intent categories and architectural tracks.
 
     Usage
     -----
-    >>> result = classify_sentence("What is the speed of light?")
-    >>> print(result["classifications"])
-    ['question']
+    >>> result = classify_sentence("SPEAKER_01: What was the inflation rate in 2023?")
+    >>> print(result["top_category"], result["track"])
+    'question_query' 'QUESTION_QUERY'
 
     Parameters
     ----------
     sentence : str
-        Input sentence to classify.
+        Input utterance to classify.
     categories : list of str, optional
-        Target categories (default: ['fact', 'claim', 'query', 'question']).
+        Target categories (default: ['fact_claim', 'opinion_debate', 'question_query']).
     model_name : str, optional
         Custom model name to override default.
     multi_label : bool, default False
@@ -302,10 +560,14 @@ def classify_sentence(
     -------
     dict
         {
-            "text": sentence,
+            "text": original sentence,
+            "cleaned_text": cleaned utterance,
             "classifications": [selected_category],
             "top_category": selected_category,
+            "track": track,
             "confidence": float,
+            "margin": float,
+            "is_ambiguous": bool,
             "scores": {category: score, ...}
         }
     """
