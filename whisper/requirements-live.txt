@@ -5,3 +5,6 @@ nvidia-cublas-cu12
 nvidia-cudnn-cu12
 openai
 python-dotenv
+# Speaker Diarization dependencies
+pyannote.audio
+torch
