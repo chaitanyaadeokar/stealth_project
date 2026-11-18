@@ -1,0 +1,122 @@
+[2026-10-20 23:10:24.514] [SYSTEM] STT_LLM_Pipeline started (whisper=large-v3-turbo, diarize=ON) | Log targets: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log, C:\Users\Avinash\OneDrive\Desktop\stealth_project\whisper\vague.log 
+[2026-10-20 23:10:24.516] [STT] speaker paused so appending data to buffer | Speaker: SPEAKER_00 | Audio: 4.5s | Text: "Yeh bharat ka sabse bada project hai." 
+[2026-10-20 23:10:24.517] [STT] 30sec over appending text to buffer | Speaker: SPEAKER_01 | Audio: 30.0s | Text: "Aur isme hum real-time fact checking aur diarization perform kar rahe hain continuously." 
+[2026-10-20 23:10:24.519] [LLM] now the 20 seconds over so sending to llm | Speakers: SPEAKER_00, SPEAKER_01
+  --- Content Sent to LLM ---
+    [SPEAKER_00]: Yeh bharat ka sabse bada project hai.
+    [SPEAKER_01]: Aur isme hum real-time fact checking aur diarization perform kar rahe hain continuously. 
+[2026-10-20 23:10:24.523] [LLM] LLM response received | Latency: 1.15s
+  --- LLM Response ---
+    TRUE: The statement refers to the real-time speech and fact checking pipeline setup. 
+[2026-10-20 23:10:24.524] [SYSTEM] STT_LLM_Pipeline stopped cleanly 
+[2026-10-20 23:13:53.091] [INFO] Verification of single log file
+[2026-10-22 00:10:21.361] [SYSTEM] LiveWhisperDiarize started (model=large-v3-turbo, lang=hi, diarize=False, llm_interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:10:23.439] [SYSTEM] LLMPipelineWorker started (PID=28028, interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:10:34.563] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 6.0s | Text: "Hello this is Avinash, testing mic"
+[2026-10-22 00:10:43.447] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: Hello this is Avinash, testing mic
+[2026-10-22 00:10:43.449] [ERROR] LLM call failed: GROQ_API_KEY was not found in the .env file. | Exception: GROQ_API_KEY was not found in the .env file.
+[2026-10-22 00:10:49.987] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 9.1s | Text: "this is my next text, currently I have set"
+[2026-10-22 00:10:57.368] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 3.2s | Text: "BM25"
+[2026-10-22 00:11:03.452] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: this is my next text, currently I have set BM25
+[2026-10-22 00:11:03.455] [ERROR] LLM call failed: GROQ_API_KEY was not found in the .env file. | Exception: GROQ_API_KEY was not found in the .env file.
+[2026-10-22 00:11:42.877] [SYSTEM] LiveWhisperDiarize stopped cleanly (KeyboardInterrupt)
+[2026-10-22 00:11:55.267] [SYSTEM] LiveWhisperDiarize started (model=large-v3-turbo, lang=hi, diarize=False, llm_interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:11:57.568] [SYSTEM] LLMPipelineWorker started (PID=24688, interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:12:22.753] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 20.0s | Text: "this is me Avinash testing mic with beam set to three earlier it was five but I have set to three and currently I am checking its performance"
+[2026-10-22 00:12:37.597] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: this is me Avinash testing mic with beam set to three earlier it was five but I have set to three and currently I am checking its performance
+[2026-10-22 00:12:38.833] [LLM] LLM response received | Latency: 1.23s
+  --- LLM Response ---
+    **Verdict: UNCERTAIN**
+    
+    **Explanation:** The speaker is making a personal, self‑referential statement about adjusting a microphone's beam setting from five to three and testing its performance. This is a subjective report about their own actions and equipment, and there is no external evidence available to confirm or refute it. Consequently, the truth of the claim cannot be independently verified.
+[2026-10-22 00:15:31.038] [SYSTEM] LiveWhisperDiarize stopped cleanly (KeyboardInterrupt)
+[2026-10-22 00:15:43.890] [SYSTEM] LiveWhisperDiarize started (model=large-v3-turbo, lang=hi, diarize=False, llm_interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:15:46.202] [SYSTEM] LLMPipelineWorker started (PID=19000, interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:16:09.280] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 17.6s | Text: "All right, this is me. अवीर atm speaking and currently I have set beam from 5 to 2 and testing it is performance."
+[2026-10-22 00:16:25.456] [SYSTEM] LiveWhisperDiarize stopped cleanly (KeyboardInterrupt)
+[2026-10-22 00:16:44.269] [SYSTEM] LiveWhisperDiarize started (model=large-v3-turbo, lang=hi, diarize=False, llm_interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:16:47.762] [SYSTEM] LLMPipelineWorker started (PID=6892, interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:16:59.147] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 7.5s | Text: "Hello this is me Amira speaking and I have set beam size from 3 to 5 again"
+[2026-10-22 00:17:07.768] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: Hello this is me Amira speaking and I have set beam size from 3 to 5 again
+[2026-10-22 00:17:08.828] [LLM] LLM response received | Latency: 1.06s
+  --- LLM Response ---
+    **Verdict:** UNCERTAIN  
+    
+    **Explanation:** The claim that “Amira” set a beam size from 3 to 5 again cannot be verified from the information provided. There is no external context, record, or evidence to confirm or refute the statement, so its truth value remains indeterminate.
+[2026-10-22 00:17:14.601] [SYSTEM] LiveWhisperDiarize stopped cleanly (KeyboardInterrupt)
+[2026-10-22 00:17:33.537] [SYSTEM] LiveWhisperDiarize started (model=large-v3-turbo, lang=hi, diarize=False, llm_interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:17:40.286] [SYSTEM] LLMPipelineWorker started (PID=28348, interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:17:47.019] [SYSTEM] LiveWhisperDiarize stopped cleanly (KeyboardInterrupt)
+[2026-10-22 00:18:05.128] [SYSTEM] LiveWhisperDiarize started (model=large-v3-turbo, lang=hi, diarize=False, llm_interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:18:10.120] [SYSTEM] LLMPipelineWorker started (PID=25288, interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-10-22 00:18:37.589] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 22.6s | Text: "वे वे कि कि अपा रपसा का युज नियुज इस वा वी एव एंव पी टूब है"
+[2026-10-22 00:18:50.146] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: वे वे कि कि अपा रपसा का युज नियुज इस वा वी एव एंव पी टूब है
+[2026-10-22 00:18:52.025] [LLM] LLM response received | Latency: 1.88s
+  --- LLM Response ---
+    **Verdict: UNCERTAIN**
+    
+    **Explanation:** The provided text appears to be a garbled mixture of Hindi and English words that does not form a coherent sentence or convey a clear factual claim. Because the meaning cannot be discerned, it is impossible to verify its truthfulness. Consequently, we must categorize the statement as uncertain.
+[2026-10-22 00:18:53.580] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 2.2s | Text: "वेलोड़ दिए मेरिया शीकांट"
+[2026-10-22 00:19:10.164] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: वेलोड़ दिए मेरिया शीकांट
+[2026-10-22 00:19:10.890] [LLM] LLM response received | Latency: 0.72s
+  --- LLM Response ---
+    **Verdict: UNCERTAIN**
+    
+    **Explanation:** The statement “वेलोड़ दिए मेरिया शीकांट” does not correspond to a clear, verifiable factual claim in any recognizable language or context. Its meaning is ambiguous or nonsensical, so we cannot determine its truth value.
+[2026-10-22 00:22:30.448] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 2.0s | Text: "आए मनलो"
+[2026-10-22 00:22:42.957] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 4.3s | Text: "गो दिस आए झालो बनों"
+[2026-10-22 00:22:48.943] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 10.7s | Text: "प्रेंच विल्ड में अधनली टॉर्वार्न, किने सोल्ड, दिस्लिस्प्ट विरो"
+[2026-10-22 00:22:50.272] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: आए मनलो गो दिस आए झालो बनों प्रेंच विल्ड में अधनली टॉर्वार्न, किने सोल्ड, दिस्लिस्प्ट विरो
+[2026-10-22 00:22:50.852] [LLM] LLM response received | Latency: 0.57s
+  --- LLM Response ---
+    **UNCERTAIN** – The provided text appears to be a garbled or nonsensical string of words that does not convey a clear, verifiable factual claim. Because its meaning cannot be discerned, there is no basis for judging it true or false.
+[2026-10-22 00:22:51.485] [SYSTEM] LiveWhisperDiarize stopped cleanly (KeyboardInterrupt)
+[2026-11-18 19:44:35.723] [SYSTEM] LiveWhisperDiarize started (model=large-v3-turbo, lang=hi, diarize=False, llm_interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-11-18 19:45:03.182] [SYSTEM] LLMPipelineWorker started (PID=6600, interval=20.0s) | Log file: C:\Users\Avinash\OneDrive\Desktop\stealth_project\vague.log
+[2026-11-18 19:45:16.425] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 3.6s | Text: "अवर्यों तोड़ी दिस्कुसिंग वधर"
+[2026-11-18 19:45:23.192] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: अवर्यों तोड़ी दिस्कुसिंग वधर
+[2026-11-18 19:45:24.218] [LLM] LLM response received | Latency: 1.02s
+  --- LLM Response ---
+    **UNCERTAIN** – The provided text appears to be garbled or nonsensical (it does not form a clear factual claim that can be verified). Without a coherent statement, its truth value cannot be determined.
+[2026-11-18 19:45:25.478] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 2.3s | Text: "गोड़ इवनिंग"
+[2026-11-18 19:45:43.213] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: गोड़ इवनिंग
+[2026-11-18 19:45:44.099] [LLM] LLM response received | Latency: 0.88s
+  --- LLM Response ---
+    **UNCERTAIN**
+    
+    The phrase “गोड़ इवनिंग” appears to be an attempted transliteration of the English greeting “Good evening” into Devanagari script, but it is misspelled (the correct transliteration would be “गुड इवनिंग”). Since this is merely a greeting rather than a factual claim, there is no verifiable truth value to assess. Hence, we cannot label it as true or false.
+[2026-11-18 19:46:03.306] [STT] speaker paused so appending data to buffer | Speaker: UNKNOWN | Audio: 16.5s | Text: "तड़े वेस्टिस्टिस्टिस्टिस्टिस्टिछिएंस"
+[2026-11-18 19:46:23.240] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: तड़े वेस्टिस्टिस्टिस्टिस्टिस्टिछिएंस
+[2026-11-18 19:46:24.484] [LLM] LLM response received | Latency: 1.24s
+  --- LLM Response ---
+    **UNCERTAIN**
+    
+    The provided text (“तड़े वेस्टिस्टिस्टिस्टिस्टिछिएंस”) appears to be a garbled or nonsensical string of characters rather than a clear factual claim. Because it does not convey a discernible statement that can be verified against reliable information, its truth value cannot be determined. Hence, we must label it as uncertain.
+[2026-11-18 19:46:59.850] [STT] 30sec over appending text to buffer | Speaker: UNKNOWN | Audio: 48.4s | Text: "प tempूत कि पतो है लगीरी जाती है एका प्लिस में पाप्लीजी कि एक रालो Teams कि गarriveतीज्जी की जरे हैं अट्यम गडिछी कि अच्यानद अचीजे ठीह लिए नहीं? विलाओ की एंसरे उंसी बेंसे जिड़ आपि उन्से में अच्शन But is it true that AI can completely understand a student's emotional and social needs? I don't think AI can completely understand human emotions but technology is improving very quickly."
+[2026-11-18 19:47:03.256] [LLM] now the 20 seconds over so sending to llm | Speakers: UNKNOWN
+  --- Content Sent to LLM ---
+    [UNKNOWN]: प tempूत कि पतो है लगीरी जाती है एका प्लिस में पाप्लीजी कि एक रालो Teams कि गarriveतीज्जी की जरे हैं अट्यम गडिछी कि अच्यानद अचीजे ठीह लिए नहीं? विलाओ की एंसरे उंसी बेंसे जिड़ आपि उन्से में अच्शन But is it true that AI can completely understand a student's emotional and social needs? I don't think AI can completely understand human emotions but technology is improving very quickly.
+[2026-11-18 19:47:04.211] [LLM] LLM response received | Latency: 0.95s
+  --- LLM Response ---
+    **FALSE** – While AI tools can detect certain cues (e.g., facial expressions, tone of voice, text sentiment) and can provide helpful support, they do not yet possess the deep, contextual, and empathetic understanding required to fully grasp a student’s emotional and social needs. Human emotions are complex, culturally nuanced, and often dependent on subtle, unspoken cues that current AI systems cannot reliably interpret or respond to with complete accuracy. Advances are rapid, but “complete” understanding remains beyond today’s technology.
+[2026-11-18 19:47:27.159] [SYSTEM] LiveWhisperDiarize stopped cleanly (KeyboardInterrupt)

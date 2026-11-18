@@ -158,3 +158,44 @@ Please use the [🙌 Show and tell](https://github.com/openai/whisper/discussion
 ## License
 
 Whisper's code and model weights are released under the MIT License. See [LICENSE](https://github.com/openai/whisper/blob/main/LICENSE) for further details.
+
+### Multichannel WAV simulation
+
+The default `python live_whisper.py` microphone mode is unchanged. To process
+independent prerecorded channels on one PC:
+
+```sh
+python live_whisper.py --language en --wav left=left.wav --wav right=right.wav
+python -m unittest discover -s tests -p test_multichannel.py
+```
+
+Use one mono 16-bit PCM WAV per channel. Files start at a shared time zero;
+include silence to align recordings. Other sample rates are decoded to 16 kHz.
+Each file is transcribed independently with Faster-Whisper. Output includes
+session-relative start/end seconds and stable `speaker:<channel ID>` identities.
+Segments sort by start time, channel ID, then end time, retaining overlapping
+speech even when the words match. This is an offline simulation, not timed playback.
+Auto language mode detects each channel independently.
+
+`audio_input.AudioSource` isolates capture from transcription. A future USB
+adapter can yield `AudioChannel(channel_id, mono_16khz_samples, start_seconds)`
+blocks with a shared hardware clock. Keep channel IDs stable and avoid mixing
+channels. `transcribe_channels` accepts the existing Faster-Whisper model and
+returns `Transcript` records; an optional `on_transcript(record)` callback receives
+them in chronological order. Pass `record.text` to text-only conversation or
+intent handlers, retaining speaker and timestamp metadata alongside it. No
+conversation manager or intent classifier implementation is present in this
+checkout. Continuous live multichannel publishing would require a watermark
+policy; the current finite-source merger collects all segments before delivery.
+
+The two-channel unit simulation uses generated WAV signals and a deterministic
+Whisper substitute to verify independent input, transcript text propagation,
+speaker identity, chronological ordering, equal-time ties, overlaps and offsets.
+It does not measure speech recognition accuracy.
+
+For a real recognition smoke test using the cached Faster-Whisper
+`large-v3-turbo` model and the bundled JFK speech sample, run
+`python tests/simulate_multichannel.py`. It generates two temporary WAVs,
+transcribes both, and checks recognized words, stable speakers, ordering,
+one-second offsets and preserved overlap. This optional test uses CPU int8
+and never downloads a model.

@@ -290,11 +290,37 @@ if __name__ == "__main__":
                         help="'hinglish' (default, Roman Latin script), 'hindi' (pure Devanagari)")
     parser.add_argument("--task", type=str, default="transcribe", choices=["transcribe", "translate"],
                         help="'transcribe' for native/hinglish, or 'translate' to translate Hindi to English")
+    parser.add_argument("--wav", action="append", metavar="CHANNEL=PATH",
+                        help="Simulate a channel from a mono PCM WAV; repeat per channel")
     args = parser.parse_args()
 
-    live_transcribe(
-        model_name=args.model,
-        language_mode=args.language,
-        output_script=args.output,
-        task=args.task
-    )
+    if args.wav:
+        from audio_input import WavChannel, WavInput, transcribe_channels
+
+        channels = []
+        for specification in args.wav:
+            channel_id, separator, path = specification.partition("=")
+            if not separator or not channel_id or not path:
+                parser.error("--wav requires CHANNEL=PATH")
+            channels.append(WavChannel(channel_id, path))
+        try:
+            source = WavInput(channels)
+        except ValueError as error:
+            parser.error(str(error))
+        transcribe_channels(
+            source, create_whisper_model(args.model),
+            on_transcript=lambda r: print(
+                f"[{r.start:.2f}-{r.end:.2f}] [{r.speaker_id}]: {r.text}"
+            ),
+            text_transform=devanagari_to_hinglish if args.output == "hinglish" else None,
+            language=args.language if args.language in ("hi", "en") else None,
+            task=args.task, beam_size=5, vad_filter=True,
+            condition_on_previous_text=False,
+        )
+    else:
+        live_transcribe(
+            model_name=args.model,
+            language_mode=args.language,
+            output_script=args.output,
+            task=args.task
+        )
