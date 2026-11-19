@@ -1,3 +1,188 @@
+# Live conversation pipeline (Phase 0 and Phase 1)
+
+This repository includes the Whisper speech library below and a live conversation
+application. Both live scripts now submit finalized speech to the same SQLite-backed,
+chronological intent router. The original transcription models, language options,
+model selection and Hinglish conversion remain available. Finalized chunk previews
+replace repeated growing-buffer inference in the default live path.
+
+## Application setup
+
+Use a virtual environment. The offline application tests were run on the existing
+Python 3.14 environment; this does not certify all speech/GPU dependencies on that
+version. For a fresh speech environment, choose a Python version supported by the
+binary wheels for your hardware and the declared dependencies (3.11/3.12 are useful
+starting points).
+
+```powershell
+python -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+# Optional diarization (uses pyannote directly; no sibling WhisperX checkout):
+.\venv\Scripts\python.exe -m pip install -r requirements-diarization.txt
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Copy the example only when creating a new `.env`; preserve existing credentials.
+Set `GROQ_API_KEY` for live model claim assessments. Optional diarization requires
+access to `pyannote/speaker-diarization-community-1` and an appropriate `HF_TOKEN`.
+The first speech/classification/diarization model load may download weights.
+`ffmpeg` on PATH is needed for the original Whisper file-decoding CLI/tests.
+CUDA acceleration additionally requires compatible NVIDIA drivers and libraries.
+
+```powershell
+.\venv\Scripts\python.exe live_whisper.py --language en
+.\venv\Scripts\python.exe live_whisper_diarize.py --language hi --diarize --num-speakers 2
+# Resume durable pending jobs and continue the same session:
+.\venv\Scripts\python.exe live_whisper.py --db data/sessions.sqlite3 --session-id SESSION_ID
+```
+
+Both scripts support `--help`, `--db`, `--session-id`, and `--llm-interval` without
+loading speech models. Startup checks required configuration before capture.
+Classifier initialization and an ASR/VAD warm-up complete before capture. `--model auto`
+(the default) uses multilingual `base` on CPU and `large-v3-turbo` on CUDA. This is
+an explicit speed/accuracy tradeoff: select `--model large-v3-turbo` for the previous
+model, or set `WHISPER_CPU_MODEL`. CPU auto weights live in `data/models`.
+Diarization initialization failure falls back to `UNKNOWN` speakers with diagnostics.
+`--num-speakers 2` reserves session identities `SPEAKER_00` and `SPEAKER_01`.
+It enables diarization and fails before capture if the backend is unavailable.
+Matching uses shared timestamps and persisted speaker embeddings, so local label
+swaps and a speaker returning after a gap do not allocate a third ID. Short windows
+may contain only one person; the backend uses one-to-two local clusters rather than
+inventing a second voice in every window. Ambiguous matches are logged, and actual
+speaker-attribution accuracy still needs a labeled two-voice recording.
+
+The microphone now uses a dedicated blocking-read thread and a durable float32 audio
+journal, rather than a callback queue. One ASR owner and one diarization owner can
+work concurrently, with at most two chunks in flight. The defaults use four ASR
+CPU threads, two diarization threads, and two classifier threads. Silence and chunk
+boundaries use audio sample time; chunks normally span four to six seconds.
+
+```powershell
+# Keep the previous quality-oriented model explicitly (CPU may fall behind):
+.\venv\Scripts\python.exe live_whisper_diarize.py --model large-v3-turbo --diarize
+# Recover a retained spool without opening the microphone; use its original database:
+.\venv\Scripts\python.exe live_whisper_diarize.py --db data/sessions.sqlite3 --recover-audio data/audio/SPOOL_DIRECTORY --diarize
+```
+
+`--backlog-seconds` controls a disk-backed unprocessed-audio budget (default 120
+seconds). Recording stops explicitly before the next read when that budget, the
+512 MiB recording limit, or the free-disk guard is reached. Retained audio is not
+discarded. Device-reported input overflow is an error: already lost hardware samples
+cannot be reconstructed. `--cpu-threads`, `--beam-size`, `--max-speech-duration`, and
+`--shutdown-timeout` expose the performance controls; increasing capacity is not a
+substitute for a model that can keep up.
+
+## Text replay and session inspection
+
+No microphone, weights, or API key are needed for an offline replay:
+
+```powershell
+.\venv\Scripts\python.exe pipeline_cli.py --offline --input tests/fixtures/conversation.jsonl --session-id demo
+.\venv\Scripts\python.exe pipeline_cli.py --inspect --session-id demo
+```
+
+Offline mode uses explicit demonstration rules, not ModernBERT. Omit `--offline`
+to use the existing ModernBERT classifier and the configured claim-assessment LLM.
+Input JSONL accepts `speaker`, `text`, optional stable `id`, `language`, `start`, and
+`end`. Stable IDs allow the same input to be replayed into the same session without
+duplicate jobs. An existing ID with different speaker/text/session is rejected.
+Results and error messages are available through `--inspect` even after restart.
+
+## Current routing and reliability
+
+- Questions/queries route to the question handler, which explicitly reports that
+  retrieval is unavailable until Phase 2.
+- Facts/claims route to the existing model assessment, marked `unverified` with
+  empty citations. Classification as a fact does not establish truth.
+- Opinions/debates route to the opinion handler, which reports that the panel is
+  unavailable. Handlers can be supplied to `Orchestrator` or `start_llm_pipeline`.
+- Explicit greetings/acknowledgments return `no_action`. Uncertain or ambiguous
+  model outputs return `needs_clarification`; a model-predicted neutral label never
+  discards a substantive statement.
+- Intent routing uses explicit English/Hindi/Hinglish speech-act rules and three
+  routed NLI categories; acknowledgments are handled by explicit rules. Confidence and the top-two margin are both checked;
+  the model's relative scores are not calibrated truth probabilities.
+
+SQLite stores session/utterance IDs, chronological sequence, speaker, original and
+display text, available audio times, jobs, attempts, errors, and structured results.
+Prior context is bounded to 20 turns/12,000 text characters and excludes future
+turns and other sessions. Segmentation preserves titles/decimals, splits mixed
+question/opinion clauses, and respects speaker turns and word pauses. Sentence
+parts use matched word timestamps when available; incomplete word alignment falls
+back to the complete segment text rather than omitting unaligned words.
+Acoustic chunks are not automatically intent requests: a bounded utterance assembler
+joins unfinished clauses across them, removes overlapping boundary-word repetition,
+and closes on speaker turns, real pauses or independent sentences. Its pending text
+is committed with the audio checkpoint and restored after a restart. Decoder-added
+punctuation alone does not prove a chunk contains a complete sentence.
+
+Each session has one sequential worker and a local OS lock. Input chunks commit
+atomically, job claims are transactional, and results are acknowledged only after
+successful storage. Failed jobs retry up to three total attempts with exponential
+delay; exhausted failures remain stored. SDK retries are disabled to avoid nested
+retry loops; HTTP timeout defaults to 30 seconds. SQLite busy timeout is five seconds.
+An abrupt worker crash leaves a lease that becomes recoverable after at least 120
+seconds. Explicit shutdown releases its worker's unfinished jobs immediately after
+the worker has stopped. External LLM execution is at least once across crashes; the
+database cannot guarantee exactly-once external requests.
+
+`auto` language mode now trusts the model's best language; a secondary 10% Hindi
+score no longer forces a second Hindi decode of English speech. Explicit `hi` and
+`en` modes remain available.
+
+Ctrl+C is handled by the controller as a stop request, so it cannot interrupt a
+SQLite commit midway. The intent worker ignores console SIGINT/SIGBREAK; its job
+owner can defer an unfinished model/API call at the shutdown deadline, preserve the
+pending job, and exit normally with code 0. Actual crashes and forced termination
+remain visible; exit codes are not rewritten to hide failures.
+
+Ctrl+C stops the recorder and drains recorded speech for up to `--shutdown-timeout`
+seconds, then drains the intent worker within its own timeout. The audio spool and
+its JSON manifest remain recoverable. SQLite atomically stores transcript jobs and
+audio checkpoints/speaker-tracker state; a crash between the SQLite commit and
+manifest acknowledgment does not replay completed audio. Native speech calls cannot
+be cancelled in place; a speech timeout fails explicitly and requires restarting
+the process before recovery. Bounded daemon model owners allow process exit rather
+than waiting indefinitely on those calls. Recovery is replay-only, not simultaneous
+new microphone capture.
+
+Structured `[EVENT]` JSON log entries record stage duration, CPU counters, backlog,
+route/confidence/source, errors, and audio checkpoints. `asr_thread_cpu_sec` measures
+the owner thread, not all native backend threads; capture-wide process CPU counters
+include ASR/diarization, but exclude the separate intent process.
+
+Defaults write `data/sessions.sqlite3` and repository-local `vague.log`; paths can
+be configured in `.env`. Logs coordinate complete entries across processes, but
+they are diagnostic logs, not tamper-evident forensic storage.
+
+## Application checks
+
+```powershell
+.\venv\Scripts\python.exe -m pytest -q
+.\venv\Scripts\python.exe -m pip check
+# Deliberate model-download/transcription checks:
+.\venv\Scripts\python.exe -m pytest -m integration tests/test_transcribe.py
+# Deliberate GPU-only checks:
+.\venv\Scripts\python.exe -m pytest -m requires_cuda tests/test_timing.py
+```
+
+Default tests exclude downloads and GPU-only checks. The original audio-decoding
+test skips explicitly when `ffmpeg` is absent. See
+[the latest correction report](PHASE_0_1_CORRECTION_REPORT.md) for same-recording comparisons,
+acceptance tests, and the remaining limits. Reproduce cached-model profiles without
+network requests or LLM calls:
+
+```powershell
+.\venv\Scripts\python.exe profile_phase01.py --intent
+.\venv\Scripts\python.exe profile_phase01.py --speech-pipeline --diarization --cpu-base --paced --output data/cpu-profile.json
+```
+
+These profiles require cached weights. Model quality, hardware loss, long-duration
+capture, and multi-speaker Hindi/Hinglish still need local acceptance testing before
+calling the system production-stable.
+
+---
+
 # Whisper
 
 [[Blog]](https://openai.com/blog/whisper)

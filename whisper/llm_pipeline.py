@@ -1,341 +1,247 @@
+"""Durable chronological dispatch in a bounded, Windows-spawn-compatible worker.
+
+The public factory still returns (buffer, process, stop_event). append() commits
+an utterance and job together. Audio callbacks never perform database operations.
 """
-llm_pipeline.py
----------------
-Speaker-keyed rolling transcript buffer -> LLM pipeline using multiprocessing.
-
-Windows 'spawn' compatibility
-==============================
-On Windows multiprocessing uses 'spawn': every arg passed to Process() must be
-picklable.  The ONLY objects passed to the worker are:
-
-    data        : Manager.dict proxy  -- picklable (holds manager address/authkey)
-    ptrs        : Manager.dict proxy  -- picklable
-    stop_event  : multiprocessing.Event -- picklable
-    interval_sec: float               -- picklable
-    llm_fn      : module-level func   -- picklable
-
-NO Lock is passed.  Manager dict proxies are internally serialised by the
-Manager server process, so concurrent access from main + worker is safe
-without an additional explicit lock.
-
-Buffer layout (per speaker)
-============================
-  data : { speaker_id -> [utt0, utt1, utt2, ...] }
-  ptrs : { speaker_id -> int }    <- index of next unsent utterance
-
-Every 20 s the worker reads utterances[ptr:] for each speaker, formats a
-speaker-labelled block, sends it to the LLM in a daemon Thread, then advances
-each speaker's pointer.
-
-Non-blocking guarantees
-=======================
-- append()       : proxy dict call, no local I/O, returns immediately.
-- get_new_spkrs(): proxy dict calls + pointer advance, no local I/O.
-- LLM call       : daemon Thread inside worker -- never blocks the 20-s loop.
-- Shutdown       : stop_event.wait(timeout) -- wakes instantly on Ctrl-C.
-"""
-
 from __future__ import annotations
 
-import sys
+import json
+import math
+import multiprocessing
 import os
 import time
-import threading
-import multiprocessing
-from typing import Any, Callable, Dict, List, Tuple
+import uuid
 
-try:
-    import logger
-except ImportError:
-    from whisper import logger
+import logger
+from conversation import ConversationStore
+from orchestrator import Orchestrator
+from session_lock import SessionLock
+from shutdown_signals import ignore_worker_interrupts, shield_shutdown
+from audio_capture import SerialExecutor
 
 
-# ---------------------------------------------------------------------------
-# Speaker-keyed transcript buffer  (main-process wrapper -- NEVER pickled)
-# ---------------------------------------------------------------------------
 class TranscriptBuffer:
-    """
-    Main-process-only wrapper around Manager dict proxies.
+    def __init__(self, store, session_id, max_pending=1000):
+        self.store, self.session_id, self.max_pending = store, session_id, max_pending
+        self._closed = False
+        self.timeline_offset = self.store.db.execute(
+            "SELECT coalesce(max(end),0) FROM utterances WHERE session_id=?", (session_id,)).fetchone()[0]
 
-    This object is NEVER passed to the worker Process.  The worker receives
-    the raw proxy objects (data, ptrs) which ARE picklable.
+    def append(self, speaker, text, **metadata):
+        if self._closed:
+            raise RuntimeError("Transcript buffer is closed")
+        if hasattr(self, "_process") and not self._process.is_alive():
+            raise RuntimeError("Intent worker exited; audio must be retained for recovery")
+        return self.store.append(self.session_id, speaker, text, max_pending=self.max_pending, **metadata)
 
-    Concurrency
-    -----------
-    Manager proxy method calls are serialised by the Manager server internally.
-    No additional Lock is required.
-    """
-
-    def __init__(self, data: Any, ptrs: Any) -> None:
-        self._data = data   # Manager.dict: { speaker -> [utt, ...] }
-        self._ptrs = ptrs   # Manager.dict: { speaker -> int }
-
-    # ------------------------------------------------------------------
-    # Main-process API
-    # ------------------------------------------------------------------
-    def append(self, speaker: str, text: str) -> None:
-        """
-        Record one utterance for *speaker*.
-
-        Parameters
-        ----------
-        speaker : str   e.g. "SPEAKER_00", "SPEAKER_01", "UNKNOWN"
-        text    : str   the transcribed utterance
-        """
-        text = text.strip()
-        if not text:
-            return
-
-        # Initialise a new speaker atomically
-        if speaker not in self._data:
-            self._data[speaker] = []
-            self._ptrs[speaker] = 0
-
-        # Read-modify-write (required for Manager dict proxy correctness)
-        lst = list(self._data[speaker])
-        lst.append(text)
-        self._data[speaker] = lst
-
-    # ------------------------------------------------------------------
-    # Read-only diagnostics (main process)
-    # ------------------------------------------------------------------
-    def speaker_stats(self) -> Dict[str, Dict[str, int]]:
-        """Return {speaker: {total, pending}} for logging."""
-        stats: Dict[str, Dict[str, int]] = {}
-        for sp in list(self._data.keys()):
-            total   = len(self._data.get(sp, []))
-            pointer = self._ptrs.get(sp, 0)
-            stats[sp] = {"total": total, "pending": total - pointer}
+    def speaker_stats(self):
+        stats = {}
+        for job in self.store.jobs(self.session_id):
+            stat = stats.setdefault(job["speaker"], {"total": 0, "pending": 0})
+            stat["total"] += 1
+            stat["pending"] += job["status"] in ("pending", "running")
         return stats
 
-    def __repr__(self) -> str:
+    def append_many(self, records, *, audio_commit=None, assembly_update=None):
+        if self._closed:
+            raise RuntimeError("Transcript buffer is closed")
+        if hasattr(self, "_process") and not self._process.is_alive():
+            raise RuntimeError("Intent worker exited; audio must be retained for recovery")
+        result = self.store.append_many(self.session_id, records, max_pending=self.max_pending,
+                                       audio_commit=audio_commit, assembly_update=assembly_update)
+        if hasattr(self, "_wake"):
+            self._wake.set()
+        return result
+
+    def close(self, timeout=20):
+        with shield_shutdown():
+            return self._close(timeout)
+
+    def _close(self, timeout):
+        """Drain within one deadline; unfinished work stays durable for resumption."""
+        if self._closed:
+            return self._shutdown_summary
+        # Leave a small reaping margin; a daemon job can be deferred durably
+        # without making normal Ctrl+C look like a crashed worker.
+        self._deadline.value = time.monotonic()+max(0,timeout)-min(.5,max(0,timeout)/2)
+        self._stop.set()
+        self._wake.set()
+        self._process.join(timeout=max(0, timeout))
+        forced = self._process.is_alive()
+        if forced:
+            self._process.terminate()
+            self._process.join(timeout=5)
+        if self._process.is_alive():
+            raise RuntimeError("Could not stop pipeline worker; database ownership was retained")
+        self.store.release(self._owner)
+        summary = {"session_id": self.session_id, "forced": forced,
+                   "pending": self.store.pending_count(self.session_id),
+                   "failed": self.store.job_counts(self.session_id).get("failed", 0),
+                   "worker_exitcode": self._process.exitcode}
+        self._shutdown_summary, self._closed = summary, True
+        self.store.close()
+        self._session_lock.close()
+        logger.log_info(f"Pipeline shutdown: {json.dumps(summary)}")
+        return summary
+
+
+def process_next(store, session_id, owner, orchestrator, *, max_attempts=3, retry_delay=1,
+                 lease_seconds=120):
+    """Process one job. A result and its acknowledgment are committed atomically."""
+    turn = store.claim(session_id, owner, max_attempts=max_attempts, lease_seconds=lease_seconds)
+    if turn is None:
+        return False
+    started = time.monotonic()
+    try:
+        logger.log_info(f"Dispatch session={session_id} utterance={turn['id']} attempt={turn['attempts']}")
+        result = orchestrator.process(turn)
+        store.complete(turn["id"], owner, result)
+    except Exception as exc:
+        store.fail(turn["id"], owner, exc, max_attempts=max_attempts,
+                   retry_delay=retry_delay * 2 ** (turn["attempts"] - 1))
+        logger.log_error(f"Dispatch failed session={session_id} utterance={turn['id']}", exc)
+    else:
+        logger.log_llm_response(json.dumps(result, ensure_ascii=False), time.monotonic() - started,
+                                speaker_block=f"session={session_id} utterance={turn['id']}")
         try:
-            stats = self.speaker_stats()
-            parts = [f"{sp}(total={v['total']}, pending={v['pending']})"
-                     for sp, v in stats.items()]
-            return f"TranscriptBuffer([{', '.join(parts)}])"
-        except Exception:
-            return "TranscriptBuffer(<unavailable>)"
+            print(f"\n[Pipeline {session_id}/{turn['sequence']} | {result['route']} | {result['status']}]\n"
+                  f"{result['text']}", flush=True)
+        except (OSError, UnicodeError):
+            pass
+    return True
 
 
-# ---------------------------------------------------------------------------
-# Helpers used inside the worker process
-# ---------------------------------------------------------------------------
-def _get_new_speakers(
-    data: Any,
-    ptrs: Any,
-) -> Dict[str, List[str]]:
-    """
-    Read new utterances (after each speaker's pointer) from the Manager proxies
-    and advance each pointer.  Returns {} when nothing new is available.
-
-    Called from the worker process with raw proxy objects.
-    """
-    result: Dict[str, List[str]] = {}
-    for speaker in list(data.keys()):
-        ptr        = ptrs.get(speaker, 0)
-        utterances = list(data.get(speaker, []))
-        new_utts   = utterances[ptr:]
-        if new_utts:
-            result[speaker] = new_utts
-            ptrs[speaker]   = len(utterances)   # advance pointer
-    return result
-
-
-def _format_speaker_block(new_speakers: Dict[str, List[str]]) -> str:
-    """
-    Format per-speaker new utterances into a readable LLM prompt block.
-
-    Example:
-        [SPEAKER_00]: Hello, how are you doing today?
-        [SPEAKER_01]: I am fine, thanks for asking.
-    """
-    lines = []
-    for speaker, utts in new_speakers.items():
-        lines.append(f"[{speaker}]: {' '.join(utts)}")
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# LLM worker target  (runs in its own Process)
-# ---------------------------------------------------------------------------
-def _llm_worker(
-    data: Any,
-    ptrs: Any,
-    stop_event: multiprocessing.Event,
-    interval_sec: float,
-    llm_fn: Callable[[str], str],
-) -> None:
-    """
-    Worker function executed in a dedicated Process.
-
-    Receives ONLY picklable objects:
-        data, ptrs   : Manager.dict proxies
-        stop_event   : multiprocessing.Event
-        interval_sec : float
-        llm_fn       : module-level callable
-
-    Non-blocking design
-    -------------------
-    1. stop_event.wait(timeout) replaces sleep() -- wakes instantly on Ctrl-C.
-    2. Each LLM call runs in a daemon Thread -- the 20-s loop never stalls.
-    3. In-flight threads joined (max 15 s) on graceful shutdown.
-    """
-    active_threads: List[threading.Thread] = []
-
-    def _dispatch_llm(speaker_block: str, timestamp: str) -> None:
-        """Daemon thread: calls LLM, logs to vague.log, and prints result."""
-        t_start = time.time()
+def _llm_worker(db_path, session_id, owner, stop_event, interval_sec, llm_fn,
+                max_attempts, retry_delay, classifier, handlers, min_confidence, log_path,
+                wake, ready, preload, shutdown_deadline):
+    ignore_worker_interrupts()
+    logger.configure(log_path=log_path)
+    store = ConversationStore(db_path)
+    orchestrator = Orchestrator(store, classifier=classifier, handlers=handlers,
+                                llm_fn=llm_fn, min_confidence=min_confidence)
+    executor = None
+    active = None
+    def dispatch_one():
+        # SQLite connections have one thread owner. A blocked external request
+        # never prevents the child controller from observing its shutdown deadline.
+        job_store = ConversationStore(db_path)
         try:
-            result = llm_fn(speaker_block)
-            latency = time.time() - t_start
-            logger.log_llm_response(
-                response=result,
-                latency_sec=latency,
-                speaker_block=speaker_block,
-            )
-            bar = "-" * 64
-            print(
-                f"\n{bar}\n"
-                f"[LLM Pipeline | {timestamp}]\n"
-                f"--- Transcript (speaker-wise) ---\n"
-                f"{speaker_block}\n"
-                f"--- LLM Response ---\n"
-                f"{result}\n"
-                f"{bar}",
-                flush=True,
-            )
-        except Exception as exc:
-            logger.log_error(f"LLM call failed: {exc}", exc=exc)
-            print(
-                f"\n[LLM Pipeline] LLM call failed: {exc}",
-                file=sys.stderr,
-                flush=True,
-            )
-
-    logger.log_system_start("LLMPipelineWorker", f"PID={os.getpid()}, interval={interval_sec}s")
-    print(
-        f"\n[LLM Pipeline] Worker ready  (interval={interval_sec}s)",
-        flush=True,
-    )
-
-    while not stop_event.is_set():
-        # Non-blocking wait: wakes on timeout OR stop signal
-        stop_event.wait(timeout=interval_sec)
-        if stop_event.is_set():
-            break
-
-        new_speakers = _get_new_speakers(data, ptrs)
-
-        if new_speakers:
-            ts            = time.strftime("%H:%M:%S")
-            speaker_block = _format_speaker_block(new_speakers)
-
-            # Log dispatch to vague.log
-            logger.log_llm_dispatch(
-                interval_sec=interval_sec,
-                speaker_block=speaker_block,
-                speakers=list(new_speakers.keys()),
-            )
-
-            # Log pointer positions
-            ptr_summary = " | ".join(
-                f"{sp} ptr={ptrs.get(sp, 0)}" for sp in new_speakers
-            )
-            print(f"[LLM Pipeline | {ts}] Dispatching -- {ptr_summary}", flush=True)
-
-            t = threading.Thread(
-                target=_dispatch_llm,
-                args=(speaker_block, ts),
-                daemon=True,
-            )
-            t.start()
-            active_threads.append(t)
-
-        # Prune finished threads
-        active_threads = [t for t in active_threads if t.is_alive()]
-
-    # ------------------------------------------------------------------
-    # Graceful shutdown: drain in-flight LLM calls
-    # ------------------------------------------------------------------
-    if active_threads:
-        print(
-            f"\n[LLM Pipeline] Draining {len(active_threads)} in-flight call(s)...",
-            flush=True,
-        )
-        for t in active_threads:
-            t.join(timeout=15)
-
-    logger.log_system_stop("LLMPipelineWorker")
-    print("\n[LLM Pipeline] Worker stopped cleanly.", flush=True)
+            job_orchestrator = Orchestrator(job_store, classifier=orchestrator.classifier,
+                handlers=orchestrator.handlers, min_confidence=min_confidence)
+            return process_next(job_store,session_id,owner,job_orchestrator,
+                max_attempts=max_attempts,retry_delay=retry_delay,
+                lease_seconds=max(120,float(os.environ.get("LLM_TIMEOUT_SEC","30"))+30))
+        finally:
+            job_store.close()
+    try:
+        if preload:
+            if classifier is None:
+                import torch
+                torch.set_num_threads(max(1, int(os.environ.get("CLASSIFIER_CPU_THREADS", "2"))))
+            orchestrator.preload()
+        if preload:
+            ready.send((True, None))
+        executor = SerialExecutor("IntentJob")
+        while True:
+            if stop_event.is_set() and not shutdown_deadline.value:
+                shutdown_deadline.value = time.monotonic()+20
+            if active is not None:
+                if active.done():
+                    worked = active.result()
+                    active = None
+                    if not worked:
+                        time.sleep(.05)
+                elif stop_event.is_set() and time.monotonic() >= shutdown_deadline.value:
+                    logger.log_event("intent_job_deferred",session_id=session_id,reason="shutdown_deadline")
+                    break
+                else:
+                    time.sleep(.01)
+                    continue
+            if stop_event.is_set() and time.monotonic() >= shutdown_deadline.value:
+                break
+            if store.pending_count(session_id):
+                active = executor.submit(dispatch_one)
+                time.sleep(.01)
+                continue
+            if stop_event.is_set():
+                break
+            if not stop_event.is_set():
+                wake.wait(interval_sec)
+            wake.clear()
+    except BaseException as exc:
+        try:
+            ready.send((False, str(exc)))
+        except (OSError, BrokenPipeError):
+            pass
+        logger.log_event("worker_failed", session_id=session_id, error=str(exc))
+        raise
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=active is None,cancel_futures=active is not None)
+        ready.close()
+        store.close()
 
 
-# ---------------------------------------------------------------------------
-# Public factory
-# ---------------------------------------------------------------------------
-def start_llm_pipeline(
-    llm_fn: Callable[[str], str],
-    interval_sec: float = 20.0,
-) -> Tuple[TranscriptBuffer, multiprocessing.Process, multiprocessing.Event]:
+def start_llm_pipeline(llm_fn=None, interval_sec=20.0, *, db_path=None, session_id=None,
+                       max_attempts=3, retry_delay=1.0, max_pending=1000,
+                       classifier=None, handlers=None, min_confidence=0.5,
+                       preload=False, startup_timeout=180):
+    """Start one sequential worker; injected callables/classifiers must be picklable.
+
+    Resume with the same database and session_id. Succeeded and exhausted jobs are
+    not replayed. Delivery is at least once if death occurs between an external
+    response and its commit. Call buffer.close() for bounded shutdown. Model
+    loading occurs only in the worker on first use.
     """
-    Create the speaker-keyed buffer and start the LLM worker process.
-
-    The Manager is created here and its proxy dicts are passed to both
-    TranscriptBuffer (main process wrapper) AND the worker Process args.
-    The Manager object itself is stored only on the returned buffer, so it
-    lives as long as the buffer lives and is never pickled.
-
-    Usage
-    -----
-        buffer, worker, stop_ev = start_llm_pipeline(fact_check_statement)
-
-        # After diarization:
-        buffer.append("SPEAKER_00", "Hello there.")
-        buffer.append("SPEAKER_01", "Hi, how are you?")
-
-        # Fallback (no diarization):
-        buffer.append("UNKNOWN", raw_text)
-
-        # On shutdown (KeyboardInterrupt):
-        stop_ev.set()
-        worker.join(timeout=20)
-
-    Parameters
-    ----------
-    llm_fn       : module-level Callable[[str], str]  (must be picklable)
-    interval_sec : float  seconds between LLM dispatches (default 20)
-
-    Returns
-    -------
-    buffer     : TranscriptBuffer         -- call buffer.append() from main loop
-    process    : multiprocessing.Process  -- daemon worker (already started)
-    stop_event : multiprocessing.Event   -- set() to initiate shutdown
-    """
-    # Manager lives in main process; proxy objects are picklable connection refs
-    manager = multiprocessing.Manager()
-    data    = manager.dict()    # { speaker_id: [utt0, utt1, ...] }
-    ptrs    = manager.dict()    # { speaker_id: int }
-    # Manager.Event IS picklable (proxy object over socket).
-    # multiprocessing.Event is NOT picklable on Windows 'spawn' mode.
-    stop_event = manager.Event()
-
-    # Thin main-process wrapper -- never passed to the worker
-    buffer          = TranscriptBuffer(data, ptrs)
-    buffer._manager = manager   # keep Manager server alive as long as buffer lives
-
-    # Worker receives ONLY picklable args: proxy dicts + Manager.Event + scalars + fn
-    process = multiprocessing.Process(
-        target=_llm_worker,
-        args=(data, ptrs, stop_event, interval_sec, llm_fn),
-        name="LLMPipelineWorker",
-        daemon=True,
-    )
-    process.start()
-
-    print(
-        f"\n[LLM Pipeline] Worker started  (PID={process.pid}, interval={interval_sec}s)",
-        flush=True,
-    )
-
-    return buffer, process, stop_event
-
+    if (not math.isfinite(interval_sec) or interval_sec <= 0
+            or not isinstance(max_attempts, int) or max_attempts < 1
+            or not math.isfinite(retry_delay) or retry_delay < 0
+            or not isinstance(max_pending, int) or max_pending < 1):
+        raise ValueError("Invalid pipeline interval, retry, or backlog setting")
+    if not 0 <= min_confidence <= 1:
+        raise ValueError("min_confidence must be between zero and one")
+    request_timeout = float(os.environ.get("LLM_TIMEOUT_SEC", "30"))
+    if not math.isfinite(request_timeout) or not 0 < request_timeout <= 300:
+        raise ValueError("LLM_TIMEOUT_SEC must be between zero and 300 seconds")
+    store = ConversationStore(db_path)
+    session_id = store.create_session(session_id)
+    try:
+        session_lock = SessionLock(store.path, session_id)
+    except BaseException:
+        store.close()
+        raise
+    owner = uuid.uuid4().hex
+    ctx = multiprocessing.get_context("spawn")
+    stop = ctx.Event()
+    wake = ctx.Event()
+    shutdown_deadline = ctx.Value("d",0)
+    receiver, sender = ctx.Pipe(duplex=False)
+    process = ctx.Process(target=_llm_worker, args=(
+        store.path, session_id, owner, stop, interval_sec, llm_fn, max_attempts,
+        retry_delay, classifier, handlers, min_confidence, logger.get_log_path(), wake, sender, preload, shutdown_deadline),
+        name="LLMPipelineWorker", daemon=True)
+    buffer = TranscriptBuffer(store, session_id, max_pending)
+    buffer._process, buffer._stop, buffer._owner = process, stop, owner
+    buffer._session_lock = session_lock
+    buffer._wake = wake
+    buffer._deadline = shutdown_deadline
+    try:
+        process.start()
+        sender.close()
+        if preload:
+            if not receiver.poll(startup_timeout):
+                raise TimeoutError("Classifier initialization timed out before capture")
+            success, error = receiver.recv()
+            if not success:
+                raise RuntimeError(f"Classifier initialization failed before capture: {error}")
+    except BaseException:
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+        store.close()
+        session_lock.close()
+        raise
+    finally:
+        receiver.close()
+    print(f"[Pipeline] session={session_id} database={store.path}", flush=True)
+    return buffer, process, stop

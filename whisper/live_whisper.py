@@ -1,20 +1,15 @@
+from __future__ import annotations
+
 import os
 import sys
 import time
 import queue
 import argparse
 import re
-import numpy as np
-import sounddevice as sd
-from dotenv import load_dotenv
-from openai import OpenAI
-try:
-    import logger
-except ImportError:
-    from whisper import logger
-
-load_dotenv()
-
+import logger
+from llm_client import fact_check_statement
+from llm_pipeline import start_llm_pipeline
+from live_runtime import load_environment, validate_environment, submit_segments, flush_audio
 # Ensure Windows terminal handles UTF-8 cleanly
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -47,37 +42,6 @@ def _setup_cuda_dlls():
     except Exception:
         pass
 
-_setup_cuda_dlls()
-
-import ctranslate2
-from faster_whisper import WhisperModel
-
-
-FACT_CHECK_SYSTEM_PROMPT = (
-    "You are a fact-checking assistant. Analyze the statement provided by the "
-    "speaker. Determine whether it is TRUE, FALSE, or UNCERTAIN. Give a short "
-    "explanation for your decision."
-)
-
-
-def fact_check_statement(statement: str) -> str:
-    """Send the exact Whisper transcription to Groq for fact-checking."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY was not found in the .env file.")
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[
-            {"role": "system", "content": FACT_CHECK_SYSTEM_PROMPT},
-            {"role": "user", "content": statement},
-        ],
-    )
-    return response.choices[0].message.content.strip()
 
 
 # --- Natural Devanagari to Hinglish (Romanized Hindi) Transliteration ---
@@ -178,6 +142,9 @@ def create_whisper_model(
     compute_type: str = None
 ):
     """Initializes and returns the optimized Faster-Whisper model."""
+    _setup_cuda_dlls()
+    import ctranslate2
+    from faster_whisper import WhisperModel
     if device is None:
         device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
     
@@ -195,162 +162,48 @@ def create_whisper_model(
     return model
 
 
-def live_transcribe(
-    model_name: str = "large-v3-turbo",
-    language_mode: str = "hi",
-    output_script: str = "hinglish",
-    task: str = "transcribe",
-    energy_threshold: float = 0.015,
-    pause_threshold: float = 0.8,
-    max_speech_duration: float = 10.0,
-):
-    """
-    Real-time microphone transcription optimized for English and Hinglish (Roman Hindi).
-    """
-    model = create_whisper_model(model_name)
-    sample_rate = 16000
-    audio_queue = queue.Queue()
-
-    def audio_callback(indata, frames, time_info, status):
-        if status:
-            print(status, file=sys.stderr)
-        audio_queue.put(indata.copy())
-
-    print("\n" + "=" * 65)
-    print(f"🎙️  LISTENING (Microphone active @ 16kHz)")
-    print(f"🌐  Language Mode : {language_mode.upper()} ('hi' for Hindi/Hinglish, 'en' for English, 'auto' for router)")
-    print(f"🔤  Output Format : {output_script.upper()} (Romanized English/Hindi)")
-    print(f"⚡  Model         : {model_name} on RTX 2050 (int8_float16)")
-    print("    Press Ctrl+C to stop.")
-    print("=" * 65 + "\n")
-
-    try:
-        with sd.InputStream(
-            samplerate=sample_rate,
-            channels=1,
-            dtype="float32",
-            blocksize=int(sample_rate * 0.1),
-            callback=audio_callback
-        ):
-            accumulated_audio = np.array([], dtype=np.float32)
-            last_speech_time = time.time()
-            speech_started = False
-            last_transcribed_time = 0.0
-
-            while True:
-                # Drain queue
-                while not audio_queue.empty():
-                    chunk = audio_queue.get().flatten()
-                    accumulated_audio = np.concatenate((accumulated_audio, chunk))
-                    
-                    rms = np.sqrt(np.mean(chunk**2)) if len(chunk) > 0 else 0
-                    if rms > energy_threshold:
-                        last_speech_time = time.time()
-                        speech_started = True
-
-                current_time = time.time()
-                audio_len_sec = len(accumulated_audio) / sample_rate
-
-                is_pause = speech_started and (current_time - last_speech_time >= pause_threshold)
-                is_max_length = audio_len_sec >= max_speech_duration
-                is_interim = speech_started and (current_time - last_transcribed_time >= 1.5) and audio_len_sec >= 1.0
-
-                if audio_len_sec >= 0.5 and (is_pause or is_max_length or is_interim):
-                    target_lang = language_mode if language_mode in ["hi", "en"] else None
-
-                    segments, info = model.transcribe(
-                        accumulated_audio,
-                        beam_size=5,
-                        language=target_lang,
-                        task=task,
-                        vad_filter=True,
-                        vad_parameters=dict(min_silence_duration_ms=300),
-                        condition_on_previous_text=False,
-                    )
-
-                    # In auto mode, route to Hindi if Hindi probability is significant
-                    if language_mode == "auto" and info and info.all_language_probs:
-                        hi_prob = next((p for l, p in info.all_language_probs if l == "hi"), 0.0)
-                        if hi_prob >= 0.10 and info.language != "hi":
-                            segments, info = model.transcribe(
-                                accumulated_audio,
-                                beam_size=5,
-                                language="hi",
-                                task=task,
-                                vad_filter=True,
-                                vad_parameters=dict(min_silence_duration_ms=300),
-                                condition_on_previous_text=False,
-                            )
-
-                    text_parts = [s.text.strip() for s in segments if s.text.strip()]
-                    raw_text = " ".join(text_parts).strip()
-                    last_transcribed_time = current_time
-
-                    if raw_text:
-                        # Convert to Hinglish (Romanized Hindi) if enabled
-                        final_text = devanagari_to_hinglish(raw_text) if output_script == "hinglish" else raw_text
-                        detected_lang = info.language.upper() if info and info.language else "UNKNOWN"
-                        
-                        if is_pause or is_max_length:
-                            append_reason = "speaker paused" if is_pause else "30sec over"
-                            logger.log_stt_append(
-                                reason=append_reason,
-                                speaker="UNKNOWN",
-                                text=raw_text,
-                                duration_sec=audio_len_sec,
-                            )
-                            print(f"\r\033[KTRANSCRIBED TEXT:\n{raw_text}")
-                            try:
-                                logger.log_llm_dispatch(interval_sec=0, speaker_block=raw_text, speakers=["UNKNOWN"])
-                                t_llm_start = time.time()
-                                llm_response = fact_check_statement(raw_text)
-                                latency = time.time() - t_llm_start
-                                logger.log_llm_response(
-                                    response=llm_response,
-                                    latency_sec=latency,
-                                    speaker_block=raw_text,
-                                )
-                                print(f"\nLLM RESPONSE:\n{llm_response}")
-                            except Exception as e:
-                                logger.log_error(f"LLM call failed: {e}", exc=e)
-                                print(f"\nLLM ERROR: {e}")
-                            accumulated_audio = np.array([], dtype=np.float32)
-                            speech_started = False
-                        else:
-                            print(f"\r\033[K🎙️ [{detected_lang}]: {final_text}...", end="", flush=True)
-                    else:
-                        if is_pause or is_max_length:
-                            accumulated_audio = np.array([], dtype=np.float32)
-                            speech_started = False
-
-                elif not speech_started and audio_len_sec > 2.0:
-                    accumulated_audio = np.array([], dtype=np.float32)
-
-                time.sleep(0.05)
-
-    except KeyboardInterrupt:
-        print("\n\n🛑 Microphone stopped.")
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+def live_transcribe(model_name="auto", language_mode="hi", output_script="hinglish",
+                    task="transcribe", energy_threshold=0.015, pause_threshold=0.8,
+                    max_speech_duration=6, llm_interval_sec=20, db_path=None, session_id=None, **options):
+    """Use the same reliable capture engine, without speaker diarization."""
+    from live_whisper_diarize import live_transcribe as run
+    return run(model_name=model_name, language_mode=language_mode, output_script=output_script,
+               task=task, energy_threshold=energy_threshold, pause_threshold=pause_threshold,
+               max_speech_duration=max_speech_duration, llm_interval_sec=llm_interval_sec,
+               db_path=db_path, session_id=session_id, enable_diarization=False, **options)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Real-time Whisper transcription with Hinglish output.")
-    parser.add_argument("--model", type=str, default="large-v3-turbo", 
-                        help="Model size: small, medium, large-v3-turbo (default: large-v3-turbo)")
+    parser.add_argument("--model", type=str, default="auto",
+                        help="auto: base on CPU, large-v3-turbo on CUDA; or explicit model/path")
     parser.add_argument("--language", type=str, default="hi", choices=["hi", "en", "auto"],
                         help="'hi' (default, best for Hindi & Hinglish), 'en' (pure English), 'auto' (dynamic router)")
     parser.add_argument("--output", type=str, default="hinglish", choices=["hinglish", "hindi"],
                         help="'hinglish' (default, Roman Latin script), 'hindi' (pure Devanagari)")
     parser.add_argument("--task", type=str, default="transcribe", choices=["transcribe", "translate"],
                         help="'transcribe' for native/hinglish, or 'translate' to translate Hindi to English")
+    parser.add_argument("--db", default=None, help="SQLite session database (or CONVERSATION_DB)")
+    parser.add_argument("--session-id", default=None, help="Resume an existing session")
+    parser.add_argument("--llm-interval", type=float, default=20.0, help="Dispatch interval in seconds")
+    parser.add_argument("--device", choices=["cpu", "cuda"], default=None)
+    parser.add_argument("--cpu-threads", type=int, default=4)
+    parser.add_argument("--beam-size", type=int, default=1)
+    parser.add_argument("--max-speech-duration", type=float, default=6)
+    parser.add_argument("--backlog-seconds", type=float, default=120)
+    parser.add_argument("--shutdown-timeout", type=float, default=20)
+    parser.add_argument("--recover-audio", default=None)
     args = parser.parse_args()
 
     live_transcribe(
         model_name=args.model,
+        device=args.device, cpu_threads=args.cpu_threads, beam_size=args.beam_size,
+        max_speech_duration=args.max_speech_duration, max_pending_seconds=args.backlog_seconds,
+        shutdown_timeout=args.shutdown_timeout, recovery=args.recover_audio,
         language_mode=args.language,
         output_script=args.output,
+        db_path=args.db,
+        session_id=args.session_id,
+        llm_interval_sec=args.llm_interval,
         task=args.task
     )

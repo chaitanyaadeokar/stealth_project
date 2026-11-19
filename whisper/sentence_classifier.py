@@ -138,6 +138,7 @@ class SentenceClassifier:
         sentence: str,
         categories: Optional[List[str]] = None,
         multi_label: bool = False,
+        hypothesis_template: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Classify a single sentence into the target categories.
@@ -182,9 +183,13 @@ class SentenceClassifier:
             if not top_category and scores:
                 top_category = max(scores, key=scores.get)
 
+            if multi_label:
+                selected = [label for label, score in scores.items() if score >= 0.5]
+            else:
+                selected = []
             return {
                 "text": sentence,
-                "classifications": [top_category] if top_category else [],
+                "classifications": selected or ([top_category] if top_category else []),
                 "top_category": top_category,
                 "confidence": round(scores.get(top_category, 0.0), 4) if top_category else 0.0,
                 "scores": scores,
@@ -198,7 +203,7 @@ class SentenceClassifier:
         result = self._pipeline(
             sentence_clean,
             candidate_labels=target_categories,
-            hypothesis_template=self.hypothesis_template,
+            hypothesis_template=hypothesis_template or self.hypothesis_template,
             multi_label=multi_label,
         )
 
@@ -236,6 +241,40 @@ class SentenceClassifier:
     ) -> List[Dict[str, Any]]:
         """Classify a list of sentences."""
         return [self.classify(s, categories=categories, multi_label=multi_label) for s in sentences]
+
+    def classify_intent(self, sentence):
+        """Use non-overlapping descriptive speech acts, not fact/query synonyms.
+
+        Relative NLI scores and their margin are retained; these are not
+        calibrated probabilities. Rules handle explicit speech acts in supported
+        languages. Ambiguous assertions still require model inference.
+        """
+        from utterance_segmentation import explicit_intent, is_fragment
+        labels = {
+            "question": "asks a question or requests information",
+            "claim": "states a fact or makes a verifiable factual assertion",
+            "opinion": "expresses an opinion or a subjective value judgment",
+        }
+        if self.mock_engine is not None:
+            return self.classify(sentence, categories=list(labels))
+        if is_fragment(sentence):
+            return {"text":sentence,"top_category":None,"classifications":[],"confidence":0,
+                    "scores":{},"source":"unfinished_syntax","ambiguous":True}
+        rule = explicit_intent(sentence)
+        if rule:
+            return {"text": sentence, "top_category": rule, "classifications": [rule],
+                    "confidence": 1.0, "scores": {rule: 1.0}, "source": "explicit_speech_act",
+                    "ambiguous": False}
+        prediction = self.classify(sentence, categories=list(labels.values()), multi_label=False,
+                                   hypothesis_template="The speaker {}.")
+        reverse = {value: key for key, value in labels.items()}
+        scores = {reverse[key]: value for key, value in prediction["scores"].items() if key in reverse}
+        ranked = sorted(scores, key=scores.get, reverse=True)
+        top = ranked[0] if ranked else None
+        margin = scores[top] - scores[ranked[1]] if len(ranked) > 1 else 0.0
+        return {"text": sentence, "top_category": top, "classifications": [top] if top else [],
+                "confidence": scores.get(top, 0), "scores": scores, "margin": round(margin, 4),
+                "source": "descriptive_nli", "ambiguous": margin < 0.08}
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import whisper
 from whisper.tokenizer import get_tokenizer
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("model_name", whisper.available_models())
 def test_transcribe(model_name: str):
     device = "cuda" if torch.cuda.is_available() else "cpu"

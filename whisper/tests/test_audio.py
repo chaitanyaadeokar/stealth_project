@@ -1,10 +1,14 @@
 import os.path
+import shutil
+
+import pytest
 
 import numpy as np
 
 from whisper.audio import SAMPLE_RATE, load_audio, log_mel_spectrogram
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg executable is required for file-audio decoding")
 def test_audio():
     audio_path = os.path.join(os.path.dirname(__file__), "jfk.flac")
     audio = load_audio(audio_path)

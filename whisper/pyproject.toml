@@ -31,11 +31,14 @@ dependencies = [
   "triton>=2; (platform_machine=='x86_64' and sys_platform=='linux') or sys_platform=='linux2'",
 ]
 optional-dependencies.dev = [ "black", "flake8", "isort", "pytest", "scipy" ]
+optional-dependencies.live = [ "faster-whisper", "sounddevice", "openai>=1.0", "python-dotenv", "transformers>=4.48.0,<5" ]
+optional-dependencies.diarization = [ "pyannote.audio>=4,<5" ]
 urls = { Homepage = "https://github.com/openai/whisper" }
 scripts.whisper = "whisper.transcribe:cli"
+scripts.conversation-replay = "pipeline_cli:main"
 
 [tool.setuptools]
-py-modules = [ "whisper" ]
+py-modules = [ "live_whisper", "live_whisper_diarize", "logger", "llm_pipeline", "llm_client", "sentence_classifier", "conversation", "orchestrator", "diarization", "live_runtime", "pipeline_cli", "session_lock", "audio_capture", "capture_runtime", "utterance_segmentation", "shutdown_signals" ]
 include-package-data = true
 
 [tool.setuptools.dynamic]
@@ -46,6 +49,10 @@ exclude = [ "tests*" ]
 namespaces = false
 
 [tool.black]
+
+[tool.pytest.ini_options]
+markers = [ "requires_cuda: needs CUDA hardware", "integration: downloads models or calls external services" ]
+addopts = "-m 'not integration and not requires_cuda'"
 
 [tool.isort]
 profile = "black"

@@ -1,0 +1,3 @@
+# Direct pyannote adapter replaces the undeclared ../whisperx checkout.
+-r requirements.txt
+pyannote.audio>=4,<5

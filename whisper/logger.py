@@ -19,6 +19,7 @@ import sys
 import time
 import datetime
 import threading
+import json
 from typing import List, Optional
 
 # Lock for thread safety within the current process
@@ -27,6 +28,11 @@ _process_lock = threading.Lock()
 # Custom log file override if set
 _custom_log_path: Optional[str] = None
 _console_echo: bool = os.environ.get("VAGUE_LOG_CONSOLE", "0") in ("1", "true", "True")
+
+
+def log_event(event, **fields):
+    """Machine-readable diagnostic payload; callers supply IDs and durations, not secrets."""
+    _write_entry("EVENT", json.dumps({"event": event, **fields}, ensure_ascii=False, default=str))
 
 
 def configure(log_path: Optional[str] = None, console_echo: Optional[bool] = None) -> None:
@@ -49,10 +55,7 @@ def get_log_path() -> str:
     if env_path:
         return os.path.abspath(env_path)
 
-    # Project root directory (parent of whisper/ directory)
-    module_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(module_dir) if os.path.basename(module_dir).lower() == "whisper" else module_dir
-    return os.path.abspath(os.path.join(project_root, "vague.log"))
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "vague.log")
 
 
 # Backward-compatible alias
@@ -75,8 +78,24 @@ def _write_entry(prefix: str, message: str) -> None:
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
             with open(log_file, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-                f.flush()
+                # Coordinate complete multiline entries across the capture and worker processes.
+                if os.name == "nt":
+                    import msvcrt
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.seek(0, os.SEEK_END)
+                    f.write(line + "\n")
+                    f.flush()
+                finally:
+                    if os.name == "nt":
+                        f.seek(0)
+                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except Exception as exc:
             sys.stderr.write(f"[logger.py] Failed to write log to {log_file}: {exc}\n")
 
@@ -167,8 +186,9 @@ def log_llm_response(
     """
     lat_str = f" | Latency: {latency_sec:.2f}s" if latency_sec is not None else ""
     indented_response = "\n    " + response.strip().replace("\n", "\n    ")
+    correlation = f" | Input: {speaker_block}" if speaker_block else ""
     msg = (
-        f"LLM response received{lat_str}\n"
+        f"LLM response received{lat_str}{correlation}\n"
         f"  --- LLM Response ---{indented_response}"
     )
     _write_entry("LLM", msg)

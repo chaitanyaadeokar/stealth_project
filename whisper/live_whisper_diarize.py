@@ -1,23 +1,17 @@
+from __future__ import annotations
+
 import os
 import sys
 import time
 import queue
 import argparse
 import re
-import warnings
-import multiprocessing
-import numpy as np
-import sounddevice as sd
-
-# Suppress noisy numpy RuntimeWarnings from pyannote.audio internals
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
-from dotenv import load_dotenv
-from openai import OpenAI
-from llm_pipeline import start_llm_pipeline
 import logger
-from whisper import logger
-
-load_dotenv()
+from llm_client import fact_check_statement
+from llm_pipeline import start_llm_pipeline
+from live_runtime import load_environment, validate_environment
+from capture_runtime import run_capture
+import multiprocessing
 
 # Ensure Windows terminal handles UTF-8 cleanly
 if hasattr(sys.stdout, "reconfigure"):
@@ -51,29 +45,8 @@ def _setup_cuda_dlls():
     except Exception:
         pass
 
-_setup_cuda_dlls()
 
-import ctranslate2
-from faster_whisper import WhisperModel
-
-# --- Inject local whisperx into sys.path so we can import DiarizationPipeline ---
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_WHISPERX_ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "whisperx"))
-if _WHISPERX_ROOT not in sys.path:
-    sys.path.insert(0, _WHISPERX_ROOT)
-
-# --- Speaker Diarization imports (optional, graceful fallback) ---
-_DIARIZATION_AVAILABLE = False
-DiarizationPipeline = None
-_assign_word_speakers = None
-
-try:
-    from whisperx.diarize import DiarizationPipeline, assign_word_speakers as _assign_word_speakers
-    _DIARIZATION_AVAILABLE = True
-except ImportError as _e:
-    print(f"⚠️  Diarization not available (missing dependency): {_e}", file=sys.stderr)
-    print("    Install with: pip install pyannote.audio torch", file=sys.stderr)
-
+from diarization import DiarizationPipeline, assign_word_speakers as _assign_word_speakers
 
 # ---------------------------------------------------------------------------
 # ANSI color codes for speaker labels
@@ -102,33 +75,6 @@ def _speaker_color(speaker_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Fact-check via Groq
 # ---------------------------------------------------------------------------
-FACT_CHECK_SYSTEM_PROMPT = (
-    "You are a fact-checking assistant. Analyze the statement provided by the "
-    "speaker. Determine whether it is TRUE, FALSE, or UNCERTAIN. Give a short "
-    "explanation for your decision."
-)
-
-
-def fact_check_statement(statement: str) -> str:
-    """Send the exact Whisper transcription to Groq for fact-checking."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY was not found in the .env file.")
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[
-            {"role": "system", "content": FACT_CHECK_SYSTEM_PROMPT},
-            {"role": "user", "content": statement},
-        ],
-    )
-    return response.choices[0].message.content.strip()
-
-
 # ---------------------------------------------------------------------------
 # Devanagari → Hinglish transliteration (unchanged from original)
 # ---------------------------------------------------------------------------
@@ -226,13 +172,20 @@ def devanagari_to_hinglish(text: str) -> str:
 # Model initialization
 # ---------------------------------------------------------------------------
 def create_whisper_model(
-    model_size: str = "large-v3-turbo",
+    model_size: str = "auto",
     device: str = None,
-    compute_type: str = None
+    compute_type: str = None,
+    cpu_threads: int = 4,
 ):
     """Initializes and returns the optimized Faster-Whisper model."""
+    _setup_cuda_dlls()
+    import ctranslate2
+    from faster_whisper import WhisperModel
     if device is None:
         device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+    automatic = model_size == "auto"
+    if automatic:
+        model_size = "large-v3-turbo" if device == "cuda" else os.environ.get("WHISPER_CPU_MODEL", "base")
 
     if compute_type is None:
         compute_type = "int8_float16" if device == "cuda" else "int8"
@@ -242,9 +195,21 @@ def create_whisper_model(
         model_size,
         device=device,
         compute_type=compute_type,
-        download_root=os.path.join(os.path.expanduser("~"), ".cache", "whisper")
+        cpu_threads=cpu_threads,
+        num_workers=1,
+        use_auth_token=False if automatic else None,
+        download_root=(os.path.join(os.path.dirname(__file__), "data", "models") if automatic and device == "cpu"
+                       else os.path.join(os.path.expanduser("~"), ".cache", "whisper"))
     )
-    print("Model loaded successfully!")
+    from faster_whisper.vad import get_vad_model
+    import numpy as np
+    get_vad_model()
+    warm_started = time.perf_counter()
+    warm_segments, _ = model.transcribe(np.zeros(16000, dtype=np.float32), language="en",
+        beam_size=1, vad_filter=False, condition_on_previous_text=False, word_timestamps=True)
+    list(warm_segments)
+    logger.log_event("asr_warmed", model=model_size, device=device, wall_sec=time.perf_counter() - warm_started)
+    print("Model and VAD loaded; speech inference warmed successfully!")
     return model
 
 
@@ -252,7 +217,7 @@ def create_diarization_pipeline(device: str = None):
     """
     Initialize the pyannote speaker diarization pipeline.
 
-    Uses pyannote/speaker-diarization-community-1 (no HF license required).
+    Uses pyannote/speaker-diarization-community-1 (requires model access).
     Falls back gracefully if unavailable, returning None.
 
     Args:
@@ -261,9 +226,8 @@ def create_diarization_pipeline(device: str = None):
     Returns:
         DiarizationPipeline instance, or None if unavailable.
     """
-    if not _DIARIZATION_AVAILABLE:
-        return None
-
+    import torch
+    torch.set_num_threads(2)
     hf_token = os.getenv("HF_TOKEN")
 
     if device is None:
@@ -294,7 +258,7 @@ def create_diarization_pipeline(device: str = None):
 # ---------------------------------------------------------------------------
 def _build_transcript_dict_shifted(segments_list: list, offset_sec: float = 0.0) -> dict:
     """
-    Build a WhisperX-compatible transcript dict from faster-whisper segments,
+    Build a timestamped transcript dict from faster-whisper segments,
     shifting all timestamps forward by `offset_sec`.
 
     This is needed for rolling-buffer diarization: Whisper reports timestamps
@@ -312,8 +276,8 @@ def _build_transcript_dict_shifted(segments_list: list, offset_sec: float = 0.0)
             d["words"] = [
                 {
                     "word":  w.word,
-                    "start": w.start + offset_sec,
-                    "end":   (w.end or w.start) + offset_sec,
+                    "start": (w.start if w.start is not None else seg.start) + offset_sec,
+                    "end":   (w.end if w.end is not None else (w.start if w.start is not None else seg.end)) + offset_sec,
                 }
                 for w in seg.words
             ]
@@ -333,9 +297,8 @@ def _assign_speakers_to_segments(
     """
     Run diarization on the *rolling* audio buffer and assign speaker labels.
 
-    Key insight: diarization is run on `rolling_audio` (the full session history
-    so far) instead of just the current chunk. This gives pyannote cross-segment
-    context so it can consistently label SPEAKER_00 vs SPEAKER_01 across time.
+    Diarization uses a bounded rolling window for cross-segment context.
+    Speaker labels remain provisional as older audio leaves the window.
 
     The Whisper segment timestamps are shifted by `chunk_offset_sec` so they
     align with the rolling buffer's timeline before calling assign_word_speakers.
@@ -358,7 +321,7 @@ def _assign_speakers_to_segments(
             min_speakers=min_speakers,
             max_speakers=max_speakers,
         )
-        result = _assign_word_speakers(diarize_df, transcript_dict, fill_nearest=True)
+        result = _assign_word_speakers(diarize_df, transcript_dict, fill_nearest=False)
         return result.get("segments", [])
     except Exception as e:
         print(f"\n⚠️  Diarization failed: {e}", file=sys.stderr)
@@ -378,7 +341,15 @@ def _print_diarized_output(diarized_segments: list, output_script: str, detected
     current_speaker = None
     current_texts = []
 
-    for seg in diarized_segments:
+    units = []
+    for segment in diarized_segments:
+        words = segment.get("words") or []
+        if words and re.sub(r"\s+", "", "".join(w.get("word", "") for w in words)) == re.sub(r"\s+", "", segment.get("text", "")):
+            units.extend({"speaker": word.get("speaker", segment.get("speaker", "UNKNOWN")), "text": word.get("word", "")}
+                         for word in words)
+        else:
+            units.append(segment)
+    for seg in units:
         speaker = seg.get("speaker", "UNKNOWN")
         text = seg.get("text", "").strip()
         if not text:
@@ -405,241 +376,53 @@ def _print_diarized_output(diarized_segments: list, output_script: str, detected
 # Main transcription loop
 # ---------------------------------------------------------------------------
 def live_transcribe(
-    model_name: str = "large-v3-turbo",
-    language_mode: str = "hi",
-    output_script: str = "hinglish",
-    task: str = "transcribe",
-    energy_threshold: float = 0.015,
-    pause_threshold: float = 0.8,
-    max_speech_duration: float = 30.0,
-    enable_diarization: bool = False,
-    num_speakers: int = None,
-    min_speakers: int = None,
-    max_speakers: int = None,
-    llm_interval_sec: float = 20.0,
+    model_name="auto", language_mode="hi", output_script="hinglish", task="transcribe",
+    energy_threshold=0.015, pause_threshold=0.8, max_speech_duration=6.0,
+    enable_diarization=False, num_speakers=None, min_speakers=None, max_speakers=None,
+    llm_interval_sec=20.0, db_path=None, session_id=None, beam_size=1, cpu_threads=4,
+    device=None, recovery=None, max_pending_seconds=120, shutdown_timeout=20,
 ):
-    """
-    Real-time microphone transcription with optional speaker diarization.
-
-    Speaker diarization uses pyannote/speaker-diarization-community-1 via the
-    local whisperx package. Enable with --diarize flag.
-    """
-    model = create_whisper_model(model_name)
-    sample_rate = 16000
-    audio_queue = queue.Queue()
-
-    # --- Start the non-blocking rolling-buffer LLM pipeline ---
-    # fact_check_statement is a module-level function so it is picklable on Windows.
-    llm_buffer, llm_worker, llm_stop_event = start_llm_pipeline(
-        llm_fn=fact_check_statement,
-        interval_sec=llm_interval_sec,
-    )
-
-    # --- Initialize diarization pipeline (optional) ---
-    diarize_pipeline = None
-    if enable_diarization:
-        if not _DIARIZATION_AVAILABLE:
-            print("⚠️  Diarization requested but pyannote.audio is not installed.")
-            print("    Run: pip install pyannote.audio torch")
-            print("    Continuing without diarization.\n")
-        else:
-            diarize_pipeline = create_diarization_pipeline()
-
-    def audio_callback(indata, frames, time_info, status):
-        if status:
-            print(status, file=sys.stderr)
-        audio_queue.put(indata.copy())
-
-    diarize_status = "✅ ON" if diarize_pipeline else ("❌ OFF (unavailable)" if enable_diarization else "⬜ OFF")
-
-    print("\n" + "=" * 65)
-    print(f"🎙️  LISTENING (Microphone active @ 16kHz)")
-    print(f"🌐  Language Mode      : {language_mode.upper()} ('hi' for Hindi/Hinglish, 'en' for English, 'auto' for router)")
-    print(f"🔤  Output Format      : {output_script.upper()} (Romanized English/Hindi)")
-    print(f"⚡  Model             : {model_name} on {'CUDA' if ctranslate2.get_cuda_device_count() > 0 else 'CPU'}")
-    print(f"👥  Speaker Diarization: {diarize_status}")
-    if diarize_pipeline and (num_speakers or min_speakers or max_speakers):
-        print(f"    Speakers: num={num_speakers}, min={min_speakers}, max={max_speakers}")
-    print("    Press Ctrl+C to stop.")
-    print("=" * 65 + "\n")
-
-    logger.log_system_start(
-        "LiveWhisperDiarize",
-        f"model={model_name}, lang={language_mode}, diarize={bool(diarize_pipeline)}, llm_interval={llm_interval_sec}s",
-    )
-
+    """Preload models, then run journaled capture with bounded speech-stage concurrency."""
+    load_environment()
+    validate_environment()
+    if cpu_threads < 1 or beam_size < 1 or max_speech_duration <= 0:
+        raise ValueError("CPU threads, beam size and speech duration must be positive")
+    if num_speakers is not None:
+        if num_speakers < 1:
+            raise ValueError("num_speakers must be positive")
+        enable_diarization = True
+    os.environ.setdefault("OMP_NUM_THREADS", "2")
+    os.environ.setdefault("MKL_NUM_THREADS", "2")
+    if recovery:
+        import json
+        from pathlib import Path
+        manifest = json.loads((Path(recovery) / "capture.json").read_text(encoding="utf-8"))
+        if session_id is not None and session_id != manifest["session_id"]:
+            raise ValueError("Recovery session does not match --session-id")
+        session_id = manifest["session_id"]
+    buffer = None
     try:
-        with sd.InputStream(
-            samplerate=sample_rate,
-            channels=1,
-            dtype="float32",
-            blocksize=int(sample_rate * 0.1),
-            callback=audio_callback
-        ):
-            accumulated_audio = np.array([], dtype=np.float32)
-            last_speech_time = time.time()
-            speech_started = False
-            last_transcribed_time = 0.0
-
-            # Rolling buffer: accumulates full session audio for cross-segment diarization.
-            # We cap it at MAX_ROLLING_SECS to avoid unbounded memory growth.
-            rolling_audio = np.array([], dtype=np.float32)
-            MAX_ROLLING_SECS = 30.0  # keep up to 5 minutes of context
-            MAX_ROLLING_SAMPLES = int(sample_rate * MAX_ROLLING_SECS)
-
-            while True:
-                # Drain queue
-                while not audio_queue.empty():
-                    chunk = audio_queue.get().flatten()
-                    accumulated_audio = np.concatenate((accumulated_audio, chunk))
-
-                    rms = np.sqrt(np.mean(chunk**2)) if len(chunk) > 0 else 0
-                    if rms > energy_threshold:
-                        last_speech_time = time.time()
-                        speech_started = True
-
-                current_time = time.time()
-                audio_len_sec = len(accumulated_audio) / sample_rate
-
-                is_pause      = speech_started and (current_time - last_speech_time >= pause_threshold)
-                is_max_length = audio_len_sec >= max_speech_duration
-                is_interim    = speech_started and (current_time - last_transcribed_time >= 1.5) and audio_len_sec >= 1.0
-
-                if audio_len_sec >= 0.5 and (is_pause or is_max_length or is_interim):
-                    target_lang = language_mode if language_mode in ["hi", "en"] else None
-
-                    # --- Transcription ---
-                    segments_gen, info = model.transcribe(
-                        accumulated_audio,
-                        beam_size=5,
-                        language=target_lang,
-                        task=task,
-                        vad_filter=True,
-                        vad_parameters=dict(min_silence_duration_ms=500),
-                        condition_on_previous_text=False,
-                        word_timestamps=bool(diarize_pipeline),
-                        no_speech_threshold=0.6,   # discard segments Whisper isn't confident about
-                        log_prob_threshold=-1.0,    # drop low-probability hallucinations
-                    )
-
-                    # Auto-mode: re-run in Hindi if Hindi probability is significant
-                    if language_mode == "auto" and info and info.all_language_probs:
-                        hi_prob = next((p for l, p in info.all_language_probs if l == "hi"), 0.0)
-                        if hi_prob >= 0.10 and info.language != "hi":
-                            segments_gen, info = model.transcribe(
-                                accumulated_audio,
-                                beam_size=5,
-                                language="hi",
-                                task=task,
-                                vad_filter=True,
-                                vad_parameters=dict(min_silence_duration_ms=300),
-                                condition_on_previous_text=False,
-                                word_timestamps=bool(diarize_pipeline),
-                            )
-
-                    # Materialise the generator (needed for diarization + re-use)
-                    segments_list = list(segments_gen)
-                    text_parts = [s.text.strip() for s in segments_list if s.text.strip()]
-                    raw_text = " ".join(text_parts).strip()
-                    last_transcribed_time = current_time
-
-                    if raw_text:
-                        detected_lang = info.language.upper() if info and info.language else "UNKNOWN"
-
-                        if is_pause or is_max_length:
-                            # --- Finalized segment: run diarization if enabled ---
-                            if diarize_pipeline and segments_list:
-                                # --- Rolling buffer management ---
-                                # Record where the current chunk starts in the rolling buffer
-                                chunk_offset_sec = len(rolling_audio) / sample_rate
-
-                                # Append current chunk to rolling buffer
-                                rolling_audio = np.concatenate((rolling_audio, accumulated_audio))
-
-                                # Trim rolling buffer if it exceeds max duration
-                                if len(rolling_audio) > MAX_ROLLING_SAMPLES:
-                                    excess = len(rolling_audio) - MAX_ROLLING_SAMPLES
-                                    rolling_audio = rolling_audio[excess:]
-                                    chunk_offset_sec = max(0.0, chunk_offset_sec - excess / sample_rate)
-
-                                print(f"\r\033[K📝 TRANSCRIBED ({detected_lang}) "
-                                      f"[rolling: {len(rolling_audio)/sample_rate:.1f}s]:")
-                                diarized = _assign_speakers_to_segments(
-                                    diarize_pipeline,
-                                    rolling_audio,
-                                    segments_list,
-                                    chunk_offset_sec=chunk_offset_sec,
-                                    num_speakers=num_speakers,
-                                    min_speakers=min_speakers,
-                                    max_speakers=max_speakers,
-                                )
-                                _print_diarized_output(diarized, output_script, detected_lang)
-                            else:
-                                # No diarization — original behavior
-                                print(f"\r\033[KTRANSCRIBED TEXT:\n{raw_text}")
-
-                            # Feed the finalized transcript into the speaker-keyed LLM buffer.
-                            # The worker process picks it up every llm_interval_sec seconds
-                            # in a non-blocking daemon thread -- main loop is never stalled.
-                            append_reason = "speaker paused" if is_pause else "30sec over"
-
-                            if diarize_pipeline and diarized:
-                                # Group consecutive text per speaker and append individually
-                                # so each speaker's pointer advances independently.
-                                _speaker_accum: dict = {}
-                                for _seg in diarized:
-                                    _sp  = _seg.get("speaker", "UNKNOWN")
-                                    _txt = _seg.get("text", "").strip()
-                                    if _txt:
-                                        _out = devanagari_to_hinglish(_txt) if output_script == "hinglish" else _txt
-                                        _speaker_accum.setdefault(_sp, []).append(_out)
-                                for _sp, _txts in _speaker_accum.items():
-                                    combined_spk_text = " ".join(_txts)
-                                    llm_buffer.append(_sp, combined_spk_text)
-                                    logger.log_stt_append(
-                                        reason=append_reason,
-                                        speaker=_sp,
-                                        text=combined_spk_text,
-                                        duration_sec=audio_len_sec,
-                                    )
-                            else:
-                                # No diarization -- use a single default speaker key
-                                llm_buffer.append("UNKNOWN", raw_text)
-                                logger.log_stt_append(
-                                    reason=append_reason,
-                                    speaker="UNKNOWN",
-                                    text=raw_text,
-                                    duration_sec=audio_len_sec,
-                                )
-
-                            accumulated_audio = np.array([], dtype=np.float32)
-                            speech_started = False
-                        else:
-                            # Interim preview (no diarization overhead)
-                            final_text = devanagari_to_hinglish(raw_text) if output_script == "hinglish" else raw_text
-                            print(f"\r\033[K🎙️ [{detected_lang}]: {final_text}...", end="", flush=True)
-                    else:
-                        if is_pause or is_max_length:
-                            accumulated_audio = np.array([], dtype=np.float32)
-                            speech_started = False
-
-                elif not speech_started and audio_len_sec > 2.0:
-                    accumulated_audio = np.array([], dtype=np.float32)
-
-                time.sleep(0.05)
-
+        # Classifier weights and its first inference finish before capture/model contention.
+        buffer, _, _ = start_llm_pipeline(fact_check_statement, interval_sec=llm_interval_sec,
+            db_path=db_path, session_id=session_id, preload=True)
+        model = create_whisper_model(model_name, device=device, cpu_threads=cpu_threads)
+        diarizer = create_diarization_pipeline(device=device) if enable_diarization else None
+        if num_speakers is not None and diarizer is None:
+            raise RuntimeError("A fixed speaker count requires a working diarization model; capture was not started")
+        logger.log_event("models_ready", session_id=buffer.session_id, model=model_name,
+                         diarization=bool(diarizer), cpu_threads=cpu_threads, beam_size=beam_size)
+        return run_capture(model, buffer, diarizer=diarizer, language=language_mode, task=task,
+            display_fn=devanagari_to_hinglish if output_script == "hinglish" else None,
+            energy_threshold=energy_threshold, pause_seconds=pause_threshold,
+            max_seconds=max_speech_duration, beam_size=beam_size, recovery=recovery,
+            max_pending_seconds=max_pending_seconds, shutdown_timeout=shutdown_timeout,
+            speaker_options={"num_speakers":num_speakers,"min_speakers":min_speakers,"max_speakers":max_speakers})
     except KeyboardInterrupt:
-        print("\n\n🛑 Microphone stopped.")
-        logger.log_system_stop("LiveWhisperDiarize", "KeyboardInterrupt")
-        # Signal and wait for the LLM pipeline worker to drain in-flight calls
-        llm_stop_event.set()
-        llm_worker.join(timeout=20)
-        print("🛑 LLM pipeline stopped.")
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        logger.log_error(f"LiveWhisperDiarize encountered error: {e}", exc=e)
-        import traceback
-        traceback.print_exc()
+        logger.log_event("startup_interrupted", session_id=buffer.session_id if buffer else session_id)
+        return {"interrupted": True}
+    finally:
+        if buffer is not None:
+            print(f"[Pipeline shutdown] {buffer.close(timeout=shutdown_timeout)}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -650,8 +433,8 @@ if __name__ == "__main__":
         description="Real-time Whisper transcription with optional Speaker Diarization and Hinglish output."
     )
     parser.add_argument(
-        "--model", type=str, default="large-v3-turbo",
-        help="Model size: small, medium, large-v3-turbo (default: large-v3-turbo)"
+        "--model", type=str, default="auto",
+        help="auto: base on CPU, large-v3-turbo on CUDA; or an explicit model/path"
     )
     parser.add_argument(
         "--language", type=str, default="hi", choices=["hi", "en", "auto"],
@@ -684,12 +467,28 @@ if __name__ == "__main__":
         help="Maximum number of speakers to detect (used when --num-speakers is not set)."
     )
 
+    parser.add_argument("--db", default=None, help="SQLite session database (or CONVERSATION_DB)")
+    parser.add_argument("--session-id", default=None, help="Resume an existing session")
+    parser.add_argument("--llm-interval", type=float, default=20.0, help="Dispatch interval in seconds")
+    parser.add_argument("--device", choices=["cpu", "cuda"], default=None)
+    parser.add_argument("--cpu-threads", type=int, default=4)
+    parser.add_argument("--beam-size", type=int, default=1)
+    parser.add_argument("--max-speech-duration", type=float, default=6)
+    parser.add_argument("--backlog-seconds", type=float, default=120)
+    parser.add_argument("--shutdown-timeout", type=float, default=20)
+    parser.add_argument("--recover-audio", default=None, help="Replay a retained audio spool before starting another capture")
     args = parser.parse_args()
 
     live_transcribe(
         model_name=args.model,
+        device=args.device, cpu_threads=args.cpu_threads, beam_size=args.beam_size,
+        max_speech_duration=args.max_speech_duration, max_pending_seconds=args.backlog_seconds,
+        shutdown_timeout=args.shutdown_timeout, recovery=args.recover_audio,
         language_mode=args.language,
         output_script=args.output,
+        db_path=args.db,
+        session_id=args.session_id,
+        llm_interval_sec=args.llm_interval,
         task=args.task,
         enable_diarization=args.diarize,
         num_speakers=args.num_speakers,
