@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}Microphone {{ microphone_id }} · Podcast Studio{% endblock %}{% block content %}
+<section class="hero"><p class="eyebrow">Active input</p><h1>Microphone {{ microphone_id }}</h1><p>Your pipeline is ready for its own audio stream.</p></section>
+<section class="status-card">
+  <div><p class="label">Connection</p><p class="status" id="connection" role="status" aria-live="polite">Ready</p></div>
+  <button type="button" id="start">Start microphone</button>
+  <button type="button" id="stop" disabled>Stop</button>
+  <button type="button" id="mute" aria-pressed="false" disabled>Mute</button>
+  <button type="button" id="mode" aria-pressed="false">Open mic</button>
+  <button type="button" id="ptt" aria-pressed="false" disabled>Hold to talk</button>
+  <select id="device" aria-label="Audio input"><option value="">Default microphone</option></select>
+  <meter id="level" aria-label="Microphone level" min="0" max="1" value="0"></meter>
+</section>
+<p id="error" role="alert" hidden></p>
+<p><a class="back" href="/live">View both microphones</a></p>
+<section class="panels"><div><h2>Transcript</h2><div id="transcript"></div></div><div><h2>Reasoning</h2><div id="reasoning"></div></div></section>
+<script type="module" src="/static/js/mic-client.js" data-mic="{{ microphone_id }}"></script>
+{% endblock %}

@@ -1,0 +1,13 @@
+Loading Whisper model 'base' on CPU (int8)...
+Loading Whisper model 'base' on CPU (int8)...
+Model loaded successfully!
+Model loaded successfully!
+INFO:     127.0.0.1:54801 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54811 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51886 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62616 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62616 - "GET /mic/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63879 - "POST /api/mics/1/start HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64347 - "POST /api/mics/1/stop HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54122 - "GET /live HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54122 - "GET /static/js/live-client.js HTTP/1.1" 200 OK

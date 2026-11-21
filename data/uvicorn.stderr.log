@@ -1,0 +1,63 @@
+\u26a0\ufe0f  Diarization not available (missing dependency): No module named 'whisperx'
+    Install with: pip install pyannote.audio torch
+INFO:     Started server process [12584]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-11-19 22:25:03,548 INFO httpx2: HTTP Request: GET https://huggingface.co/api/models/Systran/faster-whisper-base/revision/main "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:60276 - "WebSocket /ws/mic/1" [accepted]
+INFO:     connection open
+2026-11-19 22:28:39,467 INFO backend.app.pipelines.worker: Started pipeline for microphone 1
+2026-11-19 22:28:40,712 INFO faster_whisper: Processing audio with duration 00:01.236
+2026-11-19 22:28:40,915 INFO faster_whisper: VAD filter removed 00:01.236 of audio
+2026-11-19 22:28:41,145 INFO faster_whisper: Processing audio with duration 00:01.662
+2026-11-19 22:28:41,181 INFO faster_whisper: VAD filter removed 00:01.662 of audio
+2026-11-19 22:28:41,562 INFO faster_whisper: Processing audio with duration 00:02.089
+2026-11-19 22:28:41,593 INFO faster_whisper: VAD filter removed 00:02.089 of audio
+2026-11-19 22:28:41,990 INFO faster_whisper: Processing audio with duration 00:02.515
+2026-11-19 22:28:42,027 INFO faster_whisper: VAD filter removed 00:01.744 of audio
+2026-11-19 22:28:46,062 INFO faster_whisper: Processing audio with duration 00:06.564
+2026-11-19 22:28:46,129 INFO faster_whisper: VAD filter removed 00:02.308 of audio
+2026-11-19 22:28:49,674 INFO faster_whisper: Processing audio with duration 00:10.145
+2026-11-19 22:28:49,766 INFO faster_whisper: VAD filter removed 00:05.889 of audio
+2026-11-19 22:28:53,581 INFO faster_whisper: Processing audio with duration 00:14.066
+2026-11-19 22:28:53,675 INFO faster_whisper: VAD filter removed 00:09.810 of audio
+2026-11-19 22:28:57,182 INFO faster_whisper: Processing audio with duration 00:14.237
+2026-11-19 22:28:57,297 INFO faster_whisper: VAD filter removed 00:09.981 of audio
+2026-11-19 22:29:00,746 INFO faster_whisper: Processing audio with duration 00:01.407
+2026-11-19 22:29:00,760 INFO faster_whisper: VAD filter removed 00:00.560 of audio
+2026-11-19 22:29:01,202 INFO openai._base_client: Retrying request in 0.393015 seconds (retry 1 of 2)
+2026-11-19 22:29:01,756 INFO openai._base_client: Retrying request in 0.889933 seconds (retry 2 of 2)
+2026-11-19 22:29:01,758 INFO httpx2: HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-11-19 22:29:03,301 INFO httpx2: HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-11-19 22:29:04,170 INFO faster_whisper: Processing audio with duration 00:04.987
+2026-11-19 22:29:04,205 INFO faster_whisper: VAD filter removed 00:02.203 of audio
+2026-11-19 22:29:07,894 INFO httpx2: HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-11-19 22:29:12,117 INFO faster_whisper: Processing audio with duration 00:01.236
+2026-11-19 22:29:12,151 INFO faster_whisper: VAD filter removed 00:00.592 of audio
+2026-11-19 22:29:15,561 INFO faster_whisper: Processing audio with duration 00:04.604
+2026-11-19 22:29:15,621 INFO faster_whisper: VAD filter removed 00:00.988 of audio
+2026-11-19 22:29:18,725 INFO faster_whisper: Processing audio with duration 00:05.840
+2026-11-19 22:29:18,786 INFO faster_whisper: VAD filter removed 00:02.224 of audio
+2026-11-19 22:29:22,702 INFO httpx2: HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-11-19 22:29:26,676 INFO faster_whisper: Processing audio with duration 00:01.705
+2026-11-19 22:29:26,708 INFO faster_whisper: VAD filter removed 00:01.705 of audio
+2026-11-19 22:29:27,116 INFO faster_whisper: Processing audio with duration 00:02.131
+2026-11-19 22:29:27,151 INFO faster_whisper: VAD filter removed 00:01.296 of audio
+2026-11-19 22:29:30,438 INFO faster_whisper: Processing audio with duration 00:04.902
+2026-11-19 22:29:30,515 INFO faster_whisper: VAD filter removed 00:02.854 of audio
+2026-11-19 22:29:33,866 INFO openai._base_client: Retrying request in 0.414168 seconds (retry 1 of 2)
+2026-11-19 22:29:34,690 INFO httpx2: HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-11-19 22:29:39,404 INFO backend.app.pipelines.worker: Stopped pipeline for microphone 1
+INFO:     127.0.0.1:51128 - "WebSocket /ws/mic/0" [accepted]
+INFO:     connection open
+2026-11-19 22:29:55,890 ERROR asyncio: Exception in callback _ProactorBasePipeTransport._call_connection_lost()
+handle: <Handle _ProactorBasePipeTransport._call_connection_lost()>
+Traceback (most recent call last):
+  File "C:\Users\chait\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\asyncio\events.py", line 89, in _run
+    self._context.run(self._callback, *self._args)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chait\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\asyncio\proactor_events.py", line 165, in _call_connection_lost
+    self._sock.shutdown(socket.SHUT_RDWR)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
