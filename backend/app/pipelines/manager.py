@@ -26,6 +26,7 @@ class PipelineManager:
     ) -> None:
         self._transcript_service = transcript_service
         self._event_history: list[LiveEvent] = []
+        self._partial_events: dict[int, LiveEvent] = {}
         self._subscribers: dict[int, set[asyncio.Queue[LiveEvent]]] = defaultdict(set)
         self._workers = self._create_workers(settings)
 
@@ -68,6 +69,11 @@ class PipelineManager:
             logger.exception("Could not persist event from microphone %s", event.mic_id)
 
     def _remember(self, event: LiveEvent) -> None:
+        if event.type == "transcript.partial":
+            self._partial_events[event.mic_id] = event
+            return
+        if event.type == "transcript.final":
+            self._partial_events.pop(event.mic_id, None)
         self._event_history.append(event)
         del self._event_history[:-EVENT_HISTORY_LIMIT]
 
@@ -89,7 +95,16 @@ class PipelineManager:
         """Register one client for a microphone or the combined stream (zero)."""
         queue: asyncio.Queue[LiveEvent] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_SIZE)
         self._subscribers[stream_id].add(queue)
+        if stream_id == COMBINED_STREAM_ID:
+            # Reserve space for both current partials and incoming live events.
+            history = self._event_history[-(SUBSCRIBER_QUEUE_SIZE - 10):]
+            for event in [*history, *self._partial_events.values()]:
+                self._offer_event(queue, event)
         return queue
+
+    def live_snapshot(self) -> list[LiveEvent]:
+        """Return recent events for initial load and reconnect recovery."""
+        return [*self._event_history, *self._partial_events.values()]
 
     def unsubscribe(self, stream_id: int, queue: asyncio.Queue[LiveEvent]) -> None:
         """Remove a disconnected client from its stream."""

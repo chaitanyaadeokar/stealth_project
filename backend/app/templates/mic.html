@@ -11,7 +11,7 @@
   <meter id="level" aria-label="Microphone level" min="0" max="1" value="0"></meter>
 </section>
 <p id="error" role="alert" hidden></p>
-<p><a class="back" href="/live">View both microphones</a></p>
+<p><a class="back" href="/live" target="_blank" rel="noopener">View both microphones (new tab)</a></p>
 <section class="panels"><div><h2>Transcript</h2><div id="transcript"></div></div><div><h2>Reasoning</h2><div id="reasoning"></div></div></section>
 <script type="module" src="/static/js/mic-client.js" data-mic="{{ microphone_id }}"></script>
 {% endblock %}

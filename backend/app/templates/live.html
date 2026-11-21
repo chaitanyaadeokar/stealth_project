@@ -1,1 +1,12 @@
-{% extends "base.html" %}{% block content %}<section class="hero"><p class="eyebrow">Live Podcast</p><h1>Both microphones</h1></section><div id="transcript" aria-live="polite"></div><script type="module" src="/static/js/live-client.js"></script>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Both microphones · Podcast Studio{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Live Podcast</p><h1>Both microphones</h1>
+  <p>One conversation, in time order: earliest first. Keep your microphone tab open to continue recording.</p>
+  <p id="live-connection" role="status" aria-live="polite">Connecting</p>
+</section>
+<p id="live-empty">Waiting for speech from either microphone…</p>
+<section id="conversation" aria-label="Conversation in timestamp order" aria-live="polite"></section>
+<script type="module" src="/static/js/live-client.js?v=timeline-2"></script>
+{% endblock %}

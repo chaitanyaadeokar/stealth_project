@@ -9,6 +9,13 @@ router = APIRouter()
 templates = Jinja2Templates(directory="backend/app/templates")
 
 
+@router.get("/api/live")
+async def live_snapshot(request: Request) -> list[dict]:
+    """Read the shared conversation even if a browser cannot open WebSockets."""
+    manager: PipelineManager = request.app.state.pipeline_manager
+    return [event.model_dump(mode="json") for event in manager.live_snapshot()]
+
+
 @router.get("/", response_class=HTMLResponse)
 async def microphone_selection(request: Request) -> HTMLResponse:
     """Render the microphone selection page."""

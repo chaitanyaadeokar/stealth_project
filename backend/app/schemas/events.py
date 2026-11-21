@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import uuid4
 from pydantic import BaseModel, Field
 
 
@@ -18,3 +19,5 @@ class LiveEvent(BaseModel):
     start_seconds: float | None = None
     end_seconds: float | None = None
     source_text: str | None = None
+    event_id: str = Field(default_factory=lambda: uuid4().hex)
+    source_event_id: str | None = None

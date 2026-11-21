@@ -5,6 +5,8 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import numpy as np
 
@@ -25,6 +27,8 @@ class WhisperPipeline(Pipeline):
         self._settings = settings
         self._model: Any | None = None
         self._last_partial = ""
+        self._utterance_id = uuid4().hex
+        self._utterance_timestamp = None
         self._publish_event: Callable[[LiveEvent], Awaitable[None]] | None = None
         self._analysis_tasks: set[asyncio.Task[None]] = set()
 
@@ -62,6 +66,8 @@ class WhisperPipeline(Pipeline):
         )
 
     async def _process_audio(self, chunk: Any, beam_size: int) -> list[LiveEvent]:
+        if self._utterance_timestamp is None:
+            self._utterance_timestamp = datetime.now(timezone.utc)
         audio = np.frombuffer(chunk, dtype=np.float32)
         if audio.size == 0:
             return []
@@ -74,7 +80,10 @@ class WhisperPipeline(Pipeline):
         if not text or text == self._last_partial:
             return []
         self._last_partial = text
-        return [self._event("transcript.partial", text)]
+        return [self._event("transcript.partial", text).model_copy(update={
+            "event_id": self._utterance_id,
+            "timestamp": self._utterance_timestamp,
+        })]
 
     def _transcribe(self, audio: np.ndarray, beam_size: int) -> list[Any]:
         if self._model is None:
@@ -95,31 +104,41 @@ class WhisperPipeline(Pipeline):
             return []
         text, self._last_partial = self._last_partial, ""
         sentences = [part.strip() for part in SENTENCE_BOUNDARY.split(text)]
-        return [
+        events = [
             self._event("transcript.final", sentence)
             for sentence in sentences
             if sentence
         ]
+        for index, event in enumerate(events):
+            event.timestamp = self._utterance_timestamp or event.timestamp
+            if index == 0:
+                event.event_id = self._utterance_id
+        self._utterance_id = uuid4().hex
+        self._utterance_timestamp = None
+        return events
 
     async def on_final(self, event: LiveEvent) -> None:
         """Start analysis only after the finalized transcript was published."""
         if not self._settings.groq_api_key:
             return
         task = asyncio.create_task(
-            self._analyze(event.text),
+            self._analyze(event),
             name=f"reasoning-mic-{self._microphone_id}",
         )
         self._analysis_tasks.add(task)
         task.add_done_callback(self._analysis_tasks.discard)
 
-    async def _analyze(self, statement: str) -> None:
+    async def _analyze(self, source: LiveEvent) -> None:
+        statement = source.text
         try:
             reasoning = await asyncio.wait_for(
                 asyncio.to_thread(live_whisper.fact_check_statement, statement),
                 timeout=self._settings.llm_timeout_sec,
             )
             await self._publish(
-                self._event("reasoning", reasoning, source_text=statement)
+                self._event("reasoning", reasoning, source_text=statement).model_copy(
+                    update={"source_event_id": source.event_id}
+                )
             )
         except TimeoutError:
             await self._publish(
