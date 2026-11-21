@@ -31,6 +31,10 @@ class WhisperPipeline(Pipeline):
         self._utterance_timestamp = None
         self._publish_event: Callable[[LiveEvent], Awaitable[None]] | None = None
         self._analysis_tasks: set[asyncio.Task[None]] = set()
+        self._final_handler = None
+
+    def set_final_handler(self, handler) -> None:
+        self._final_handler = handler
 
     def set_event_publisher(
         self, callback: Callable[[LiveEvent], Awaitable[None]]
@@ -80,10 +84,14 @@ class WhisperPipeline(Pipeline):
         if not text or text == self._last_partial:
             return []
         self._last_partial = text
-        return [self._event("transcript.partial", text).model_copy(update={
-            "event_id": self._utterance_id,
-            "timestamp": self._utterance_timestamp,
-        })]
+        return [
+            self._event("transcript.partial", text).model_copy(
+                update={
+                    "event_id": self._utterance_id,
+                    "timestamp": self._utterance_timestamp,
+                }
+            )
+        ]
 
     def _transcribe(self, audio: np.ndarray, beam_size: int) -> list[Any]:
         if self._model is None:
@@ -119,6 +127,9 @@ class WhisperPipeline(Pipeline):
 
     async def on_final(self, event: LiveEvent) -> None:
         """Start analysis only after the finalized transcript was published."""
+        if self._final_handler is not None:
+            self._final_handler(event, self._publish)
+            return
         if not self._settings.groq_api_key:
             return
         task = asyncio.create_task(
@@ -149,9 +160,7 @@ class WhisperPipeline(Pipeline):
                 )
             )
         except Exception as error:
-            logger.exception(
-                "Reasoning failed for microphone %s", self._microphone_id
-            )
+            logger.exception("Reasoning failed for microphone %s", self._microphone_id)
             await self._publish(
                 self._event(
                     "error",

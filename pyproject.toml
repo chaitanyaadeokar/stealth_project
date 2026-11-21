@@ -38,8 +38,18 @@ dependencies = [
   "pydantic-settings>=2.16.3",
   "sqlalchemy[asyncio]>=2.1.9",
   "uvicorn[standard]>=0.54.0",
+  "alembic>=1.13",
+  "aiomcache>=0.8.2",
 ]
-optional-dependencies.dev = [ "black", "flake8", "isort", "pytest", "scipy" ]
+optional-dependencies.dev = [
+ "black",
+ "flake8",
+ "httpx>=0.28.1",
+ "isort",
+ "pytest",
+ "pytest-asyncio>=1.5.0",
+ "scipy",
+]
 urls = { Homepage = "https://github.com/openai/whisper" }
 scripts.whisper = "whisper.transcribe:cli"
 
@@ -55,6 +65,9 @@ exclude = [ "tests*" ]
 namespaces = false
 
 [tool.black]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.isort]
 profile = "black"

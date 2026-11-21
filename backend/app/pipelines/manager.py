@@ -22,9 +22,13 @@ class PipelineManager:
     """Own isolated workers and deliver their events to live clients."""
 
     def __init__(
-        self, settings: Settings, transcript_service: TranscriptService
+        self,
+        settings: Settings,
+        transcript_service: TranscriptService,
+        orchestration=None,
     ) -> None:
         self._transcript_service = transcript_service
+        self._orchestration = orchestration
         self._event_history: list[LiveEvent] = []
         self._partial_events: dict[int, LiveEvent] = {}
         self._subscribers: dict[int, set[asyncio.Queue[LiveEvent]]] = defaultdict(set)
@@ -36,6 +40,8 @@ class PipelineManager:
         for microphone_id in MICROPHONE_IDS:
             pipeline = WhisperPipeline(microphone_id, settings)
             pipeline.set_event_publisher(self.publish)
+            if self._orchestration is not None:
+                pipeline.set_final_handler(self._orchestration.enqueue)
             workers[microphone_id] = PipelineWorker(
                 microphone_id=microphone_id,
                 pipeline=pipeline,
@@ -97,7 +103,7 @@ class PipelineManager:
         self._subscribers[stream_id].add(queue)
         if stream_id == COMBINED_STREAM_ID:
             # Reserve space for both current partials and incoming live events.
-            history = self._event_history[-(SUBSCRIBER_QUEUE_SIZE - 10):]
+            history = self._event_history[-(SUBSCRIBER_QUEUE_SIZE - 10) :]
             for event in [*history, *self._partial_events.values()]:
                 self._offer_event(queue, event)
         return queue

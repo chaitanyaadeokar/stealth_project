@@ -6,7 +6,33 @@
   <p>One conversation, in time order: earliest first. Keep your microphone tab open to continue recording.</p>
   <p id="live-connection" role="status" aria-live="polite">Connecting</p>
 </section>
+<section class="memory-inspector" aria-labelledby="memory-title">
+  <h2 id="memory-title">System memory · testing view</h2>
+  <p>Updates every 5 seconds. Only committed turns enter short-term memory, so it may lag the live transcript.</p>
+  <button type="button" id="memory-refresh">Refresh memory</button>
+  <p id="memory-status" role="status">Loading memory…</p>
+  <p id="memory-session"></p>
+  <div class="panels">
+    <article>
+      <h3>Short-term memory</h3>
+      <p id="memory-config"></p>
+      <h4>Recent turns</h4>
+      <p id="memory-window-source"></p>
+      <ol id="memory-turns"></ol>
+      <h4>Session state</h4>
+      <p id="memory-state-source"></p>
+      <pre id="memory-state"></pre>
+      <details><summary>Cache keys and pending writes</summary><pre id="memory-debug"></pre></details>
+    </article>
+    <article>
+      <h3>Long-term memory</h3>
+      <p id="memory-long-term">Loading PostgreSQL long-term memory…</p>
+      <pre id="memory-long-records"></pre>
+    </article>
+  </div>
+</section>
 <p id="live-empty">Waiting for speech from either microphone…</p>
 <section id="conversation" aria-label="Conversation in timestamp order" aria-live="polite"></section>
 <script type="module" src="/static/js/live-client.js?v=timeline-2"></script>
+<script type="module" src="/static/js/memory-client.js?v=memory-3"></script>
 {% endblock %}

@@ -1,6 +1,29 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
+
+[[package]]
+name = "aiomcache"
+version = "0.8.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/0a/914d8df1002d88ca70679d192f6e16d113e6b5cbcc13c51008db9230025f/aiomcache-0.8.2.tar.gz", hash = "sha256:43b220d7f499a32a71871c4f457116eb23460fa216e69c1d32b81e3209e51359", size = 10640, upload-time = "2024-05-07T15:03:14.434Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/f8/78455f6377cbe85f335f4dbd40a807dafb72bd5fa05eb946f2ad0cec3d40/aiomcache-0.8.2-py3-none-any.whl", hash = "sha256:9d78d6b6e74e775df18b350b1cddfa96bd2f0a44d49ad27fa87759a3469cef5e", size = 10145, upload-time = "2024-05-07T15:03:12.003Z" },
+]
+
+[[package]]
+name = "alembic"
+version = "1.20.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mako" },
+    { name = "sqlalchemy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/1c/00909e0fbebad2121d916fdcab044cae988146680e9ee4387ba25fef8747/alembic-1.20.1.tar.gz", hash = "sha256:83490def1f723413db5096591f7609ac52544805be93849170088ed04f5a2e0b", size = 2103576, upload-time = "2026-10-22T03:24:35.93Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/3c/8740f5b4e1bd57333e4f84265b9b6363da4f7cf70f5622dd1e2fde7a0bd5/alembic-1.20.1-py3-none-any.whl", hash = "sha256:9970712cfb81ea26c8658d378aaa5b8f6ff9146e5bb111d70497c164016cf598", size = 270355, upload-time = "2026-10-22T03:24:37.667Z" },
+]
 
 [[package]]
 name = "annotated-doc"
@@ -392,40 +415,40 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
-    { name = "nvidia-cuda-nvrtc", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cufile", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 cusolver = [
-    { name = "nvidia-cublas", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
-    { name = "nvidia-cusolver", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
-    { name = "nvidia-cusparse", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "platform_machine == 'aarch64' or platform_machine == 'x86_64'" },
+    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
 ]
 
 [[package]]
@@ -603,6 +626,19 @@ wheels = [
 ]
 
 [[package]]
+name = "httpcore"
+version = "1.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
+]
+
+[[package]]
 name = "httpcore2"
 version = "2.16.2"
 source = { registry = "https://pypi.org/simple" }
@@ -699,6 +735,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/79/a3/86fe9fef3a1bfab5db62262f8880c294cbf8a8d94cffe2a2aa8b4aeed40c/httptools-0.9.0-cp315-cp315t-win32.whl", hash = "sha256:2095207b75a83c9e947346da9c127fb7e4fb29f41589df2643764f06b750989c", size = 94042, upload-time = "2026-10-09T19:56:37.441Z" },
     { url = "https://files.pythonhosted.org/packages/54/4d/f2d88782251467325a62ec4ad704249bb1b09c21aacb997181a9f4421f30/httptools-0.9.0-cp315-cp315t-win_amd64.whl", hash = "sha256:bca180cbe84e4fba7807eb408a8655295f697928512324517e30a091ede522a8", size = 100837, upload-time = "2026-10-09T19:56:38.831Z" },
     { url = "https://files.pythonhosted.org/packages/00/4b/5e96c4e0d171f959a0064971c3fced9cea5a19e5fab7a8e7d57aceb80506/httptools-0.9.0-cp315-cp315t-win_arm64.whl", hash = "sha256:4a4d8c2c7e73ba5967be74d7c3a5ff81fde815ee1b48d9c5c0f14de8463a847b", size = 95947, upload-time = "2026-10-09T19:56:40.562Z" },
+]
+
+[[package]]
+name = "httpx"
+version = "0.28.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "httpcore" },
+    { name = "idna" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
 ]
 
 [[package]]
@@ -947,6 +998,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f3/21/3d108d6c9a87142927073fbc3d82d161f2dbfdeb046063a51edb196d1132/llvmlite-0.50.0-cp315-cp315t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c7d4e2bbb29a860a6e85e22afdb96696241263942a5b214cac3e4b704e1d3abf", size = 58344488, upload-time = "2026-09-29T18:44:36.859Z" },
     { url = "https://files.pythonhosted.org/packages/6e/de/496d19b7a54acc487266ac7fa39d902cddf24998f5266b3aa499c8eacbd6/llvmlite-0.50.0-cp315-cp315t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:afd7b438c60e0f60c4368ec603bb9f20d938a203b5f59b80bbe50c749b4b2f16", size = 59696591, upload-time = "2026-09-29T18:44:40.642Z" },
     { url = "https://files.pythonhosted.org/packages/93/73/72553170eada174775d9a738c471c7be4ab3dc2c06368beeee89e002345c/llvmlite-0.50.0-cp315-cp315t-win_amd64.whl", hash = "sha256:4da0e8c6e6f144b433672a632f75d6b4da7bd4fdb5c3e9981d6ea6741319aeae", size = 42986722, upload-time = "2026-09-29T18:44:44.491Z" },
+]
+
+[[package]]
+name = "mako"
+version = "1.4.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/09/e07c4b5579a79f4b16f8d4f29f6c54514ac787c4ad506b8c4f28a0e6b0bf/mako-1.4.3.tar.gz", hash = "sha256:cd6537fe88d5fec315c55c2f8529bc4ce7a9a352ad7db3eeaa6a66e2dd4ec37a", size = 412799, upload-time = "2026-09-22T20:54:31.509Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/a0/053d6af3e8f871e0073b4a36732d9e65be77a72e5434c31b94f6af78a6bb/mako-1.4.3-py3-none-any.whl", hash = "sha256:723296007c870bfd6b3f0c3230dba7198096e5269297ebf5e4eff9e7ffa39d4f", size = 80164, upload-time = "2026-09-22T20:54:33.128Z" },
 ]
 
 [[package]]
@@ -1423,6 +1486,8 @@ wheels = [
 name = "openai-whisper"
 source = { editable = "." }
 dependencies = [
+    { name = "aiomcache" },
+    { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "faster-whisper" },
@@ -1444,18 +1509,23 @@ dependencies = [
 dev = [
     { name = "black" },
     { name = "flake8" },
+    { name = "httpx" },
     { name = "isort" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "scipy" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiomcache", specifier = ">=0.8.2" },
+    { name = "alembic", specifier = ">=1.13" },
     { name = "asyncpg", specifier = ">=0.32.0" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "fastapi", specifier = ">=0.165.0" },
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "flake8", marker = "extra == 'dev'" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1" },
     { name = "isort", marker = "extra == 'dev'" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "more-itertools" },
@@ -1465,6 +1535,7 @@ requires-dist = [
     { name = "openai", specifier = ">=3.55.1" },
     { name = "pydantic-settings", specifier = ">=2.16.3" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.5.0" },
     { name = "scipy", marker = "extra == 'dev'" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.1.9" },
     { name = "tiktoken" },
@@ -1718,6 +1789,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/79/42/bb4641652e58dedeac2ec51abc1f8cae4fee4ec63899a0999016229a0f2a/pytest-9.2.0.tar.gz", hash = "sha256:97c4f3b1f3c7414aa36465e09b8220f1d03627993bd51b1282e193753c80557b", size = 1797555, upload-time = "2026-10-27T21:30:20.728Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/39/1f5d8c8877a0fa327db959c19341d4be61660de1ab6b7391f9eb805bcd67/pytest-9.2.0-py3-none-any.whl", hash = "sha256:07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588", size = 411776, upload-time = "2026-10-27T21:30:19.131Z" },
+]
+
+[[package]]
+name = "pytest-asyncio"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2c/de/80724f9b5b9eca1a654179cae6edc51aaa0a355a9834a736e2a188b91780/pytest_asyncio-1.5.0.tar.gz", hash = "sha256:92c8fa83ca419fd0d4bd6a34df6520dae435841d3733c319343249492adf37f7", size = 146227, upload-time = "2026-11-12T16:35:49.845Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/2d/e600d8f47597a803641704aba367c7266cd621f86561ec36da9888f160ec/pytest_asyncio-1.5.0-py3-none-any.whl", hash = "sha256:557f255ee03cc84f84a8d5f438bc9c6e0f714bf86970ae743c7ecb5a38d7e07d", size = 17215, upload-time = "2026-11-12T16:35:48.446Z" },
 ]
 
 [[package]]

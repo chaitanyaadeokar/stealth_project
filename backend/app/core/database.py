@@ -23,11 +23,9 @@ class Database:
 
     async def init_db(self) -> None:
         """Initialize database resources without creating schema objects."""
-        # Deliberately lightweight bootstrap; Alembic is deferred for this scaffold.
-        from backend.app.models import Base
-
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        # Schema changes are managed exclusively by `alembic upgrade head`.
+        # Connectivity failures are handled by background persistence retries.
+        return None
 
     async def close_db(self) -> None:
         """Dispose all database connections during application shutdown."""
